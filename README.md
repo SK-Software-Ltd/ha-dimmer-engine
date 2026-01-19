@@ -1,5 +1,7 @@
 # SKSoft Dimmer Engine for Home Assistant
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=SK-Software-Ltd&repository=ha-dimmer-engine&category=integration)
+
 A custom Home Assistant integration that provides a sine-wave, time-based brightness cycling engine for one or more Light entities. It runs a single shared async loop for all active lights, making it efficient and lightweight.
 
 ## Features
@@ -13,22 +15,20 @@ A custom Home Assistant integration that provides a sine-wave, time-based bright
 
 ## Installation
 
+### HACS Installation (Recommended)
+
+1. Click the button at the top of this page to open HACS in your Home Assistant instance
+2. Click "Download" to install the integration
+3. Restart Home Assistant
+4. Go to Settings → Devices & Services → Add Integration
+5. Search for "SKSoft Dimmer Engine" and click to add it
+
 ### Manual Installation
 
 1. Copy the `custom_components/sksoft_dimmer_engine` folder to your Home Assistant `custom_components` directory
 2. Restart Home Assistant
-3. Add `sksoft_dimmer_engine:` to your `configuration.yaml`
-4. Restart Home Assistant again
-
-### Configuration
-
-Add the following to your `configuration.yaml`:
-
-```yaml
-sksoft_dimmer_engine:
-```
-
-No additional configuration is required.
+3. Go to Settings → Devices & Services → Add Integration
+4. Search for "SKSoft Dimmer Engine" and click to add it
 
 ## Services
 
