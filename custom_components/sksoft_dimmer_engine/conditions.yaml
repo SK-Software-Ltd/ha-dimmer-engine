@@ -1,0 +1,9 @@
+is_cycle_dimming:
+  fields:
+    lights:
+      required: true
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: light
