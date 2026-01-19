@@ -25,8 +25,8 @@ class SKSoftDimmerEngineConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> ConfigFlowResult:
         """Handle the initial step."""
         LOGGER.debug(
-            "async_step_user called, user_input=%s",
-            user_input,
+            "async_step_user called, user_input_provided=%s",
+            user_input is not None,
         )
         # Check if already configured
         await self.async_set_unique_id(DOMAIN)
