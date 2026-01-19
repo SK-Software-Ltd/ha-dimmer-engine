@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any
 import voluptuous as vol
 
 from homeassistant import config_entries
+from homeassistant.components.light import ATTR_BRIGHTNESS
 from homeassistant.const import (
-    ATTR_BRIGHTNESS,
     ATTR_ENTITY_ID,
     SERVICE_TURN_ON,
 )
