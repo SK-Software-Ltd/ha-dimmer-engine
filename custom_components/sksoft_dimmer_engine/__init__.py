@@ -19,6 +19,7 @@ from homeassistant.components.light import ATTR_BRIGHTNESS, ATTR_TRANSITION
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     SERVICE_TURN_ON,
+    STATE_ON,
 )
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
@@ -399,11 +400,16 @@ class DimmerEngine:
         # Clamp to valid range
         target = max(min_b, min(max_b, target))
 
-        # Get current brightness
+        # Get current state
         state = self.hass.states.get(entity_id)
         if state is None:
             LOGGER.warning("Entity %s not found, will remove from registry", entity_id)
             return entity_id
+
+        # Skip lights that are not currently on
+        if state.state != STATE_ON:
+            LOGGER.debug("Skipping %s: light is not on (state=%s)", entity_id, state.state)
+            return None
 
         current_brightness = state.attributes.get(ATTR_BRIGHTNESS, 0)
         if current_brightness is None:
