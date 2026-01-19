@@ -207,8 +207,8 @@ automation:
 
 The integration uses standard Home Assistant logging:
 
-- **INFO**: Start/stop actions, status queries
-- **DEBUG**: Tick updates (set logger level to debug to see these)
+- **INFO**: Start/stop actions, status queries, config entry creation
+- **DEBUG**: Tick updates, config flow steps, module loading
 - **WARNING**: Entity not found, light not in registry
 
 To enable debug logging, add to your `configuration.yaml`:
@@ -219,6 +219,67 @@ logger:
   logs:
     custom_components.sksoft_dimmer_engine: debug
 ```
+
+After modifying `configuration.yaml`, restart Home Assistant for the changes to take effect.
+
+## Troubleshooting
+
+### "Invalid handler specified" Error
+
+If you see "Config flow could not be loaded: Invalid handler specified" when trying to add the integration:
+
+1. **Enable debug logging** by adding the following to your `configuration.yaml`:
+
+   ```yaml
+   logger:
+     default: info
+     logs:
+       custom_components.sksoft_dimmer_engine: debug
+       homeassistant.config_entries: debug
+       homeassistant.loader: debug
+   ```
+
+2. **Restart Home Assistant** to apply the logging configuration.
+
+3. **Check the logs** by navigating to Settings → System → Logs, or by checking the `home-assistant.log` file in your config directory.
+
+4. **Look for these log entries** to identify the issue:
+   - `SKSoft Dimmer Engine config_flow module loaded` - Confirms the config_flow module is being loaded
+   - `async_step_user called` - Confirms the config flow is being initiated
+   - Any error messages from `homeassistant.loader` about the integration
+
+5. **Common causes and solutions**:
+   - **Integration not properly installed**: Ensure the `sksoft_dimmer_engine` folder is in your `custom_components` directory with all required files
+   - **Missing files**: Verify all files exist: `__init__.py`, `config_flow.py`, `const.py`, `manifest.json`, `strings.json`, and `translations/en.json`
+   - **Cache issues**: Try restarting Home Assistant twice, or clear the browser cache
+   - **Syntax errors**: Check the logs for Python syntax errors in the integration files
+
+### Checking Installed Files
+
+To verify the integration is properly installed, check that these files exist in your `custom_components/sksoft_dimmer_engine/` directory:
+
+```
+custom_components/
+  sksoft_dimmer_engine/
+    __init__.py
+    config_flow.py
+    const.py
+    manifest.json
+    services.yaml
+    storage.py
+    strings.json
+    translations/
+      en.json
+```
+
+### Collecting Debug Information
+
+When reporting issues, please include:
+
+1. Your Home Assistant version
+2. The contents of `manifest.json` (to verify the version)
+3. Relevant log entries from `home-assistant.log` with debug logging enabled
+4. How you installed the integration (HACS or manual)
 
 ## License
 

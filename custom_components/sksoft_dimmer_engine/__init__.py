@@ -67,6 +67,10 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 
+# Log at module load time to help debug integration loading issues
+LOGGER.debug("SKSoft Dimmer Engine __init__ module loaded, DOMAIN=%s", DOMAIN)
+
+
 def _validate_brightness_range(data: dict) -> dict:
     """Validate that min_brightness is less than max_brightness."""
     min_b = data.get(ATTR_MIN_BRIGHTNESS, DEFAULT_MIN_BRIGHTNESS)
