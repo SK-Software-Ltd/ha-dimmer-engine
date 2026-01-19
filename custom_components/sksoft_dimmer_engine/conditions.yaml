@@ -7,3 +7,13 @@ is_cycle_dimming:
           multiple: true
           filter:
             domain: light
+
+is_ccw_cycling:
+  fields:
+    lights:
+      required: true
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: light

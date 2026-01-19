@@ -20,6 +20,16 @@
           "description": "List of light entity IDs to check."
         }
       }
+    },
+    "is_ccw_cycling": {
+      "name": "Is CCW Cycling",
+      "description": "Check if any of the specified light entities are currently in color temperature (CCW) cycling.",
+      "fields": {
+        "lights": {
+          "name": "Lights",
+          "description": "List of light entity IDs to check."
+        }
+      }
     }
   }
 }

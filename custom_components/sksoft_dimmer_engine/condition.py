@@ -45,14 +45,49 @@ def is_cycle_dimming(hass: HomeAssistant, entity_ids: list[str]) -> bool:
         True if at least one of the entities is currently in cycle dimming.
 
     """
-    engine = hass.data.get(DOMAIN)
-    if engine is None:
+    data = hass.data.get(DOMAIN)
+    if data is None:
         LOGGER.debug(
             "Dimmer engine not found in hass.data, returning False for is_cycle_dimming"
         )
         return False
 
+    engine = data.get("dimmer_engine")
+    if engine is None:
+        LOGGER.debug(
+            "Dimmer engine not found in data dict, returning False for is_cycle_dimming"
+        )
+        return False
+
     return engine.is_cycle_dimming(entity_ids)
+
+
+def is_ccw_cycling(hass: HomeAssistant, entity_ids: list[str]) -> bool:
+    """Check if any of the given light entities are in CCW cycling.
+
+    Args:
+        hass: Home Assistant instance.
+        entity_ids: List of entity IDs to check.
+
+    Returns:
+        True if at least one of the entities is currently in CCW cycling.
+
+    """
+    data = hass.data.get(DOMAIN)
+    if data is None:
+        LOGGER.debug(
+            "CCW engine not found in hass.data, returning False for is_ccw_cycling"
+        )
+        return False
+
+    ccw_engine = data.get("ccw_engine")
+    if ccw_engine is None:
+        LOGGER.debug(
+            "CCW engine not found in data dict, returning False for is_ccw_cycling"
+        )
+        return False
+
+    return ccw_engine.is_ccw_cycling(entity_ids)
 
 
 class IsCycleDimmingCondition(Condition):
@@ -85,8 +120,39 @@ class IsCycleDimmingCondition(Condition):
         return check_is_cycle_dimming
 
 
+class IsCCWCyclingCondition(Condition):
+    """Is CCW Cycling condition."""
+
+    _options: dict[str, Any]
+
+    @classmethod
+    async def async_validate_config(
+        cls, hass: HomeAssistant, config: ConfigType
+    ) -> ConfigType:
+        """Validate config."""
+        return cast(ConfigType, _CONDITION_SCHEMA(config))
+
+    def __init__(self, hass: HomeAssistant, config: ConditionConfig) -> None:
+        """Initialize condition."""
+        super().__init__(hass, config)
+        if config.options is None:
+            raise ValueError("Condition config options cannot be None")
+        self._options = config.options
+
+    async def async_get_checker(self) -> ConditionChecker:
+        """Return the condition checker function."""
+        lights = self._options.get(ATTR_LIGHTS, [])
+
+        def check_is_ccw_cycling(**kwargs: Any) -> bool:
+            """Check if any light is in CCW cycling."""
+            return is_ccw_cycling(self._hass, lights)
+
+        return check_is_ccw_cycling
+
+
 CONDITIONS: dict[str, type[Condition]] = {
     "is_cycle_dimming": IsCycleDimmingCondition,
+    "is_ccw_cycling": IsCCWCyclingCondition,
 }
 
 
