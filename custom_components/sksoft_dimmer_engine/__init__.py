@@ -43,7 +43,6 @@ from .const import (
     DEFAULT_TICK_S,
     DOMAIN,
     PHASE_MODE_ABSOLUTE,
-    PHASE_MODE_RELATIVE,
     PHASE_MODE_SYNC_TO_CURRENT,
     PHASE_MODES,
     REG_MAX_B,
@@ -67,27 +66,43 @@ if TYPE_CHECKING:
 
 LOGGER = logging.getLogger(__name__)
 
+def _validate_brightness_range(data: dict) -> dict:
+    """Validate that min_brightness is less than max_brightness."""
+    min_b = data.get(ATTR_MIN_BRIGHTNESS, DEFAULT_MIN_BRIGHTNESS)
+    max_b = data.get(ATTR_MAX_BRIGHTNESS, DEFAULT_MAX_BRIGHTNESS)
+    if min_b >= max_b:
+        raise vol.Invalid(
+            f"min_brightness ({min_b}) must be less than max_brightness ({max_b})"
+        )
+    return data
+
+
 # Service schemas
-SERVICE_START_SCHEMA = vol.Schema(
-    {
-        vol.Required(ATTR_LIGHTS): cv.entity_ids,
-        vol.Optional(ATTR_PERIOD_S, default=DEFAULT_PERIOD_S): vol.Coerce(float),
-        vol.Optional(ATTR_TICK_S, default=DEFAULT_TICK_S): vol.Coerce(float),
-        vol.Optional(ATTR_MIN_BRIGHTNESS, default=DEFAULT_MIN_BRIGHTNESS): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=255)
-        ),
-        vol.Optional(ATTR_MAX_BRIGHTNESS, default=DEFAULT_MAX_BRIGHTNESS): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=255)
-        ),
-        vol.Optional(ATTR_PHASE_MODE, default=DEFAULT_PHASE_MODE): vol.In(PHASE_MODES),
-        vol.Optional(ATTR_PHASE_OFFSET, default=DEFAULT_PHASE_OFFSET): vol.Coerce(
-            float
-        ),
-        vol.Optional(ATTR_SYNC_GROUP, default=DEFAULT_SYNC_GROUP): cv.boolean,
-        vol.Optional(ATTR_MIN_DELTA, default=DEFAULT_MIN_DELTA): vol.All(
-            vol.Coerce(int), vol.Range(min=1, max=255)
-        ),
-    }
+SERVICE_START_SCHEMA = vol.All(
+    vol.Schema(
+        {
+            vol.Required(ATTR_LIGHTS): cv.entity_ids,
+            vol.Optional(ATTR_PERIOD_S, default=DEFAULT_PERIOD_S): vol.Coerce(float),
+            vol.Optional(ATTR_TICK_S, default=DEFAULT_TICK_S): vol.Coerce(float),
+            vol.Optional(ATTR_MIN_BRIGHTNESS, default=DEFAULT_MIN_BRIGHTNESS): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=255)
+            ),
+            vol.Optional(ATTR_MAX_BRIGHTNESS, default=DEFAULT_MAX_BRIGHTNESS): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=255)
+            ),
+            vol.Optional(ATTR_PHASE_MODE, default=DEFAULT_PHASE_MODE): vol.In(
+                PHASE_MODES
+            ),
+            vol.Optional(ATTR_PHASE_OFFSET, default=DEFAULT_PHASE_OFFSET): vol.Coerce(
+                float
+            ),
+            vol.Optional(ATTR_SYNC_GROUP, default=DEFAULT_SYNC_GROUP): cv.boolean,
+            vol.Optional(ATTR_MIN_DELTA, default=DEFAULT_MIN_DELTA): vol.All(
+                vol.Coerce(int), vol.Range(min=1, max=255)
+            ),
+        }
+    ),
+    _validate_brightness_range,
 )
 
 SERVICE_STOP_SCHEMA = vol.Schema(
@@ -241,6 +256,10 @@ class DimmerEngine:
 
             await self.async_save()
 
+            # Stop the loop immediately if registry is now empty
+            if not self._registry:
+                self._stop_loop()
+
     async def async_stop_all(self) -> None:
         """Stop dimming for all lights."""
         async with self._lock:
@@ -248,6 +267,16 @@ class DimmerEngine:
             self._registry.clear()
             await self.async_save()
             LOGGER.info("Stopped dimmer engine for all %d lights", count)
+
+            # Stop the loop immediately
+            self._stop_loop()
+
+    def _stop_loop(self) -> None:
+        """Stop the background loop task."""
+        self._running = False
+        if self._task and not self._task.done():
+            self._task.cancel()
+            LOGGER.debug("Cancelled dimmer engine loop task")
 
     def get_status(self) -> dict[str, Any]:
         """Get the current registry status."""
@@ -303,7 +332,6 @@ class DimmerEngine:
         phase_offset = entry[REG_PHASE_OFFSET]
         min_delta = entry[REG_MIN_DELTA]
         started_at = entry[REG_STARTED_AT_TS]
-        phase_mode = entry[REG_PHASE_MODE]
 
         # Calculate elapsed time
         elapsed = now - started_at
@@ -311,11 +339,12 @@ class DimmerEngine:
         # Calculate phase
         time_phase = (2 * math.pi * elapsed) / period
 
-        if phase_mode == PHASE_MODE_RELATIVE:
-            phase = time_phase + phase_offset
-        else:
-            # For sync_to_current and absolute, offset is the starting phase
-            phase = time_phase + phase_offset
+        # All phase modes use the same formula: phase = time_phase + offset
+        # The difference is how the offset was computed when the light was registered:
+        # - sync_to_current: offset computed from current brightness using asin
+        # - absolute: offset provided directly by user
+        # - relative: offset provided by user, added to time-based phase
+        phase = time_phase + phase_offset
 
         # Calculate target brightness using sine wave
         mid = (min_b + max_b) / 2
