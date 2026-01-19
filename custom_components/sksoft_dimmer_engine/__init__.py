@@ -385,11 +385,11 @@ class DimmerEngine:
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the SKSoft Dimmer Engine integration from yaml (legacy)."""
-    # Initialize hass.data for domain if not already done
-    if DOMAIN not in hass.data:
-        hass.data[DOMAIN] = {}
+    """Set up the SKSoft Dimmer Engine integration.
 
+    This integration is configured via the UI (config flow) only.
+    This function is required for Home Assistant but does nothing.
+    """
     return True
 
 
@@ -456,7 +456,7 @@ async def async_unload_entry(
 ) -> bool:
     """Unload a config entry."""
     engine = hass.data.get(DOMAIN)
-    if engine and isinstance(engine, DimmerEngine):
+    if engine:
         await engine.async_shutdown()
 
     # Unregister services
