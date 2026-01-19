@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 
+from homeassistant import config_entries
 from homeassistant.const import (
     ATTR_BRIGHTNESS,
     ATTR_ENTITY_ID,
@@ -384,7 +385,18 @@ class DimmerEngine:
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the SKSoft Dimmer Engine integration."""
+    """Set up the SKSoft Dimmer Engine integration from yaml (legacy)."""
+    # Initialize hass.data for domain if not already done
+    if DOMAIN not in hass.data:
+        hass.data[DOMAIN] = {}
+
+    return True
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: config_entries.ConfigEntry
+) -> bool:
+    """Set up SKSoft Dimmer Engine from a config entry."""
     engine = DimmerEngine(hass)
     hass.data[DOMAIN] = engine
 
@@ -436,4 +448,24 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.services.async_register(DOMAIN, SERVICE_STATUS, handle_status)
 
     LOGGER.info("SKSoft Dimmer Engine integration loaded")
+    return True
+
+
+async def async_unload_entry(
+    hass: HomeAssistant, entry: config_entries.ConfigEntry
+) -> bool:
+    """Unload a config entry."""
+    engine = hass.data.get(DOMAIN)
+    if engine and isinstance(engine, DimmerEngine):
+        await engine.async_shutdown()
+
+    # Unregister services
+    hass.services.async_remove(DOMAIN, SERVICE_START)
+    hass.services.async_remove(DOMAIN, SERVICE_STOP)
+    hass.services.async_remove(DOMAIN, SERVICE_STOP_ALL)
+    hass.services.async_remove(DOMAIN, SERVICE_STATUS)
+
+    hass.data.pop(DOMAIN, None)
+
+    LOGGER.info("SKSoft Dimmer Engine integration unloaded")
     return True
