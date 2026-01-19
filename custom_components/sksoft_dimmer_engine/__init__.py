@@ -345,20 +345,18 @@ class DimmerEngine:
                 self._update_light(entity_id, entry, now)
                 for entity_id, entry in registry_snapshot.items()
             ]
-            entities_to_remove: list[str] = []
             if update_tasks:
                 results = await asyncio.gather(*update_tasks)
                 # Collect entities that need to be removed (missing entities)
                 entities_to_remove = [r for r in results if r is not None]
 
-            # Remove missing entities from registry while holding the lock
-            if entities_to_remove:
-                async with self._lock:
-                    for entity_id in entities_to_remove:
-                        if entity_id in self._registry:
-                            del self._registry[entity_id]
-                            LOGGER.info("Removed missing entity %s from registry", entity_id)
-                    await self.async_save()
+                # Remove missing entities from registry while holding the lock
+                if entities_to_remove:
+                    async with self._lock:
+                        for entity_id in entities_to_remove:
+                            if self._registry.pop(entity_id, None) is not None:
+                                LOGGER.info("Removed missing entity %s from registry", entity_id)
+                        await self.async_save()
 
             # Sleep for the minimum tick interval
             await asyncio.sleep(min_tick)
