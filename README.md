@@ -64,6 +64,36 @@ Stop the dimmer engine for all active lights. No parameters required.
 
 Log the current state of all active dimmer engine entries. No parameters required.
 
+## Conditions
+
+### is_cycle_dimming
+
+Check if any of the specified light entities are currently in cycle dimming. Returns true if at least one light is in cycle dimming.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| lights | list | Yes | List of light entity IDs to check |
+
+Example usage in an automation:
+
+```yaml
+automation:
+  - alias: "Do something if lights are dimming"
+    trigger:
+      - platform: state
+        entity_id: input_boolean.trigger
+        to: "on"
+    condition:
+      - condition: sksoft_dimmer_engine.is_cycle_dimming
+        lights:
+          - light.living_room
+          - light.bedroom
+    action:
+      - service: notify.notify
+        data:
+          message: "Lights are currently in cycle dimming mode!"
+```
+
 ## Phase Modes
 
 ### sync_to_current (default)

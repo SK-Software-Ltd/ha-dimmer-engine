@@ -49,3 +49,6 @@ REG_MIN_DELTA = "min_delta"
 REG_STARTED_AT_TS = "started_at_ts"
 REG_PHASE_MODE = "phase_mode"
 REG_SYNC_GROUP = "sync_group"
+
+# Condition types
+CONDITION_IS_CYCLE_DIMMING = "is_cycle_dimming"
