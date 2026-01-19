@@ -135,3 +135,139 @@ stop_all:
 status:
   name: Status
   description: Log the current state of all active dimmer engine entries.
+
+start_ccw:
+  name: Start CCW Cycling
+  description: Start color temperature (CCW) cycling for one or more lights with sine-wave pattern.
+  fields:
+    lights:
+      name: Lights
+      description: List of light entity IDs to cycle.
+      required: true
+      example: "[\"light.living_room\", \"light.bedroom\"]"
+      selector:
+        entity:
+          domain: light
+          multiple: true
+    period_s:
+      name: Period (seconds)
+      description: Duration of one complete color temperature cycle in seconds.
+      required: false
+      default: 10
+      example: 10
+      selector:
+        number:
+          min: 1
+          max: 3600
+          step: 0.1
+          unit_of_measurement: seconds
+          mode: box
+    tick_s:
+      name: Tick Interval (seconds)
+      description: How often to update color temperature in seconds.
+      required: false
+      default: 0.25
+      example: 0.25
+      selector:
+        number:
+          min: 0.05
+          max: 10
+          step: 0.05
+          unit_of_measurement: seconds
+          mode: box
+    min_color_temp:
+      name: Minimum Color Temperature
+      description: Minimum color temperature in Kelvin (warm white).
+      required: false
+      default: 2700
+      example: 2700
+      selector:
+        number:
+          min: 1000
+          max: 10000
+          step: 100
+          unit_of_measurement: K
+          mode: slider
+    max_color_temp:
+      name: Maximum Color Temperature
+      description: Maximum color temperature in Kelvin (cool white).
+      required: false
+      default: 6500
+      example: 6500
+      selector:
+        number:
+          min: 1000
+          max: 10000
+          step: 100
+          unit_of_measurement: K
+          mode: slider
+    phase_mode:
+      name: Phase Mode
+      description: >
+        How to calculate the initial phase offset.
+        - sync_to_current: Match current color temperature at start
+        - absolute: Use phase_offset as-is
+        - relative: Add phase_offset to time-based phase
+      required: false
+      default: "sync_to_current"
+      example: "sync_to_current"
+      selector:
+        select:
+          options:
+            - "sync_to_current"
+            - "absolute"
+            - "relative"
+    phase_offset:
+      name: Phase Offset
+      description: Phase offset in radians (used with absolute/relative modes).
+      required: false
+      default: 0
+      example: 0
+      selector:
+        number:
+          min: -6.283185307
+          max: 6.283185307
+          step: 0.01
+          mode: box
+    sync_group:
+      name: Sync Group
+      description: >
+        When true and phase_mode is sync_to_current, compute phase offset
+        from first light and apply to all lights in this call.
+      required: false
+      default: true
+      example: true
+      selector:
+        boolean:
+    min_delta:
+      name: Minimum Delta
+      description: >
+        Minimum color temperature difference (in Kelvin) required before updating the light.
+        Helps reduce unnecessary service calls.
+      required: false
+      default: 1
+      example: 50
+      selector:
+        number:
+          min: 1
+          max: 200
+          step: 1
+          mode: box
+
+stop_ccw:
+  name: Stop CCW Cycling
+  description: Stop color temperature (CCW) cycling for one or more lights.
+  fields:
+    lights:
+      name: Lights
+      description: List of light entity IDs to stop CCW cycling.
+      required: true
+      example: "[\"light.living_room\", \"light.bedroom\"]"
+      selector:
+        entity:
+          domain: light
+          multiple: true
+
+stop_all_ccw:
+  name: Stop All CCW Cycling
+  description: Stop color temperature (CCW) cycling for all lights.

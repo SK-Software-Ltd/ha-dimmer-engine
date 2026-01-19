@@ -64,6 +64,34 @@ Stop the dimmer engine for all active lights. No parameters required.
 
 Log the current state of all active dimmer engine entries. No parameters required.
 
+### sksoft_dimmer_engine.start_ccw
+
+Start color temperature (CCW) cycling for one or more lights using a sine wave pattern.
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| lights | list | Yes | - | List of light entity IDs to cycle |
+| period_s | float | No | 10 | Duration of one complete color temperature cycle in seconds |
+| tick_s | float | No | 0.25 | How often to update color temperature in seconds |
+| min_color_temp | int | No | 2700 | Minimum color temperature in Kelvin (warm white) |
+| max_color_temp | int | No | 6500 | Maximum color temperature in Kelvin (cool white) |
+| phase_mode | string | No | sync_to_current | Phase calculation mode: sync_to_current, absolute, relative |
+| phase_offset | float | No | 0 | Phase offset in radians |
+| sync_group | boolean | No | true | Sync all lights to first light's phase (when using sync_to_current) |
+| min_delta | int | No | 1 | Minimum color temperature change (in Kelvin) required before updating |
+
+### sksoft_dimmer_engine.stop_ccw
+
+Stop color temperature (CCW) cycling for one or more lights.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| lights | list | Yes | List of light entity IDs to stop CCW cycling |
+
+### sksoft_dimmer_engine.stop_all_ccw
+
+Stop color temperature (CCW) cycling for all active lights. No parameters required.
+
 ## Conditions
 
 ### is_cycle_dimming
@@ -92,6 +120,34 @@ automation:
       - service: notify.notify
         data:
           message: "Lights are currently in cycle dimming mode!"
+```
+
+### is_ccw_cycling
+
+Check if any of the specified light entities are currently in color temperature (CCW) cycling. Returns true if at least one light is in CCW cycling.
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| lights | list | Yes | List of light entity IDs to check |
+
+Example usage in an automation:
+
+```yaml
+automation:
+  - alias: "Do something if lights are CCW cycling"
+    trigger:
+      - platform: state
+        entity_id: input_boolean.trigger
+        to: "on"
+    condition:
+      - condition: sksoft_dimmer_engine.is_ccw_cycling
+        lights:
+          - light.living_room
+          - light.bedroom
+    action:
+      - service: notify.notify
+        data:
+          message: "Lights are currently in CCW cycling mode!"
 ```
 
 ## Phase Modes
@@ -219,6 +275,35 @@ automation:
         to: "not_home"
     action:
       - service: sksoft_dimmer_engine.stop_all
+```
+
+### Color Temperature Cycling
+
+```yaml
+script:
+  color_temp_cycle:
+    alias: "Color Temperature Cycle Effect"
+    sequence:
+      - service: sksoft_dimmer_engine.start_ccw
+        data:
+          lights:
+            - light.living_room
+          period_s: 60
+          min_color_temp: 2700
+          max_color_temp: 5000
+          phase_mode: sync_to_current
+```
+
+### Stop CCW Cycling
+
+```yaml
+automation:
+  - alias: "Stop CCW Cycling at Night"
+    trigger:
+      - platform: time
+        at: "22:00:00"
+    action:
+      - service: sksoft_dimmer_engine.stop_all_ccw
 ```
 
 ## Behavior Notes
