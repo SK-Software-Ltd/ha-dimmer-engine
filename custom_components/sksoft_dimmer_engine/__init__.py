@@ -22,10 +22,6 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers import config_validation as cv
-from homeassistant.helpers.condition import (
-    ConditionCheckerType,
-    async_register_check_condition_platform,
-)
 from homeassistant.helpers.typing import ConfigType
 
 from .const import (
@@ -38,7 +34,6 @@ from .const import (
     ATTR_PHASE_OFFSET,
     ATTR_SYNC_GROUP,
     ATTR_TICK_S,
-    CONDITION_IS_CYCLE_DIMMING,
     DEFAULT_MAX_BRIGHTNESS,
     DEFAULT_MIN_BRIGHTNESS,
     DEFAULT_MIN_DELTA,
@@ -472,30 +467,6 @@ async def async_setup_entry(
     )
     hass.services.async_register(DOMAIN, SERVICE_STOP_ALL, handle_stop_all)
     hass.services.async_register(DOMAIN, SERVICE_STATUS, handle_status)
-
-    # Register the is_cycle_dimming condition
-    @callback
-    def async_is_cycle_dimming_condition(
-        hass_ref: HomeAssistant, config: dict[str, Any]
-    ) -> ConditionCheckerType:
-        """Return a condition checker for is_cycle_dimming."""
-        entity_ids = config[ATTR_LIGHTS]
-
-        @callback
-        def check_is_cycle_dimming(
-            hass_inner: HomeAssistant, variables: dict[str, Any] | None = None
-        ) -> bool:
-            """Check if any lights are in cycle dimming."""
-            engine_instance = hass_inner.data.get(DOMAIN)
-            if engine_instance is None:
-                return False
-            return engine_instance.is_cycle_dimming(entity_ids)
-
-        return check_is_cycle_dimming
-
-    async_register_check_condition_platform(
-        hass, DOMAIN, CONDITION_IS_CYCLE_DIMMING, async_is_cycle_dimming_condition
-    )
 
     LOGGER.info("SKSoft Dimmer Engine integration loaded")
     return True
