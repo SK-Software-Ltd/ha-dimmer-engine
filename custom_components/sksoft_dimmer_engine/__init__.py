@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.components.light import ATTR_BRIGHTNESS
+from homeassistant.components.light import ATTR_BRIGHTNESS, ATTR_TRANSITION
 from homeassistant.const import (
     ATTR_ENTITY_ID,
     SERVICE_TURN_ON,
@@ -402,10 +402,12 @@ class DimmerEngine:
                 target,
                 phase,
             )
+            # Use transition time (in seconds) equal to tick interval for smooth dimming
+            tick = entry[REG_TICK]
             await self.hass.services.async_call(
                 "light",
                 SERVICE_TURN_ON,
-                {ATTR_ENTITY_ID: entity_id, ATTR_BRIGHTNESS: target},
+                {ATTR_ENTITY_ID: entity_id, ATTR_BRIGHTNESS: target, ATTR_TRANSITION: tick},
                 blocking=False,
             )
 
