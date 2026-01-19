@@ -70,7 +70,8 @@ class IsCycleDimmingCondition(Condition):
     def __init__(self, hass: HomeAssistant, config: ConditionConfig) -> None:
         """Initialize condition."""
         super().__init__(hass, config)
-        assert config.options is not None
+        if config.options is None:
+            raise ValueError("Condition config options cannot be None")
         self._options = config.options
 
     async def async_get_checker(self) -> ConditionChecker:
