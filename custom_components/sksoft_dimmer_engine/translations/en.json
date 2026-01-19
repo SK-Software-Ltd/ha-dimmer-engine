@@ -9,5 +9,17 @@
     "abort": {
       "already_configured": "This integration is already configured."
     }
+  },
+  "conditions": {
+    "is_cycle_dimming": {
+      "name": "Is Cycle Dimming",
+      "description": "Check if any of the specified light entities are currently in cycle dimming.",
+      "fields": {
+        "lights": {
+          "name": "Lights",
+          "description": "List of light entity IDs to check."
+        }
+      }
+    }
   }
 }
