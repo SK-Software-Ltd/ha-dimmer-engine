@@ -479,7 +479,7 @@ async def async_setup_entry(
         hass_ref: HomeAssistant, config: dict[str, Any]
     ) -> ConditionCheckerType:
         """Return a condition checker for is_cycle_dimming."""
-        entity_ids = config.get(ATTR_LIGHTS, [])
+        entity_ids = config[ATTR_LIGHTS]
 
         @callback
         def check_is_cycle_dimming(
