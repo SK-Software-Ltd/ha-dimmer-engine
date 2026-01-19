@@ -1,0 +1,13 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "SKSoft Dimmer Engine",
+        "description": "This integration provides a sine-wave, time-based brightness cycling engine for light entities. Click Submit to add it."
+      }
+    },
+    "abort": {
+      "already_configured": "This integration is already configured."
+    }
+  }
+}
