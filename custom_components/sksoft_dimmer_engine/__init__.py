@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-import time
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
@@ -192,7 +192,7 @@ class DimmerEngine:
     ) -> None:
         """Start dimming for the specified lights."""
         async with self._lock:
-            now = time.time()
+            now = monotonic()
             computed_offset: float | None = None
 
             for i, entity_id in enumerate(lights):
@@ -323,6 +323,7 @@ class DimmerEngine:
         LOGGER.debug("Dimmer engine loop started")
 
         while self._running:
+            # Collect registry snapshot and min tick while holding the lock
             async with self._lock:
                 if not self._registry:
                     LOGGER.debug("Registry empty, stopping loop")
@@ -333,11 +334,29 @@ class DimmerEngine:
                     entry[REG_TICK] for entry in self._registry.values()
                 )
 
-                now = time.time()
+                # Take a snapshot of the registry to avoid holding lock during updates
+                registry_snapshot = {k: dict(v) for k, v in self._registry.items()}
 
-                # Process all lights
-                for entity_id, entry in list(self._registry.items()):
-                    await self._update_light(entity_id, entry, now)
+            # Get current time after releasing lock (monotonic for accurate timing)
+            now = monotonic()
+
+            # Build update coroutines for all lights and execute in parallel
+            update_tasks = [
+                self._update_light(entity_id, entry, now)
+                for entity_id, entry in registry_snapshot.items()
+            ]
+            if update_tasks:
+                results = await asyncio.gather(*update_tasks)
+                # Collect entities that need to be removed (missing entities)
+                entities_to_remove = [r for r in results if r is not None]
+
+                # Remove missing entities from registry while holding the lock
+                if entities_to_remove:
+                    async with self._lock:
+                        for entity_id in entities_to_remove:
+                            if self._registry.pop(entity_id, None) is not None:
+                                LOGGER.info("Removed missing entity %s from registry", entity_id)
+                        await self.async_save()
 
             # Sleep for the minimum tick interval
             await asyncio.sleep(min_tick)
@@ -346,8 +365,12 @@ class DimmerEngine:
 
     async def _update_light(
         self, entity_id: str, entry: dict[str, Any], now: float
-    ) -> None:
-        """Update a single light's brightness."""
+    ) -> str | None:
+        """Update a single light's brightness.
+
+        Returns the entity_id if the entity was not found and should be removed,
+        otherwise returns None.
+        """
         period = entry[REG_PERIOD]
         min_b = entry[REG_MIN_B]
         max_b = entry[REG_MAX_B]
@@ -379,10 +402,8 @@ class DimmerEngine:
         # Get current brightness
         state = self.hass.states.get(entity_id)
         if state is None:
-            LOGGER.warning("Entity %s not found, removing from registry", entity_id)
-            if entity_id in self._registry:
-                del self._registry[entity_id]
-            return
+            LOGGER.warning("Entity %s not found, will remove from registry", entity_id)
+            return entity_id
 
         current_brightness = state.attributes.get(ATTR_BRIGHTNESS, 0)
         if current_brightness is None:
@@ -405,6 +426,8 @@ class DimmerEngine:
                 {ATTR_ENTITY_ID: entity_id, ATTR_BRIGHTNESS: target, ATTR_TRANSITION: tick},
                 blocking=False,
             )
+
+        return None
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
