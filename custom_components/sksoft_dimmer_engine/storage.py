@@ -41,7 +41,7 @@ class DimmerEngineStore:
 
 
 class CCWCycleStore:
-    """Class to manage persistent storage for the CCW cycle registry."""
+    """Class to manage persistent storage for the CCW (Correlated Color Temperature) cycle registry."""
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the storage."""

@@ -165,7 +165,7 @@ SERVICE_START_CCW_SCHEMA = vol.All(
             ),
             vol.Optional(ATTR_SYNC_GROUP, default=DEFAULT_SYNC_GROUP): cv.boolean,
             vol.Optional(ATTR_MIN_DELTA, default=DEFAULT_MIN_DELTA): vol.All(
-                vol.Coerce(int), vol.Range(min=1, max=1000)
+                vol.Coerce(int), vol.Range(min=1, max=200)
             ),
         }
     ),
@@ -783,9 +783,7 @@ class CCWCycleEngine:
             )
             return None
 
-        current_ct = state.attributes.get(ATTR_COLOR_TEMP_KELVIN, 0)
-        if current_ct is None:
-            current_ct = 0
+        current_ct = state.attributes.get(ATTR_COLOR_TEMP_KELVIN) or 0
 
         # Only update if delta is significant enough
         if abs(target - current_ct) >= min_delta:

@@ -250,7 +250,7 @@ start_ccw:
       selector:
         number:
           min: 1
-          max: 500
+          max: 200
           step: 1
           mode: box
 
