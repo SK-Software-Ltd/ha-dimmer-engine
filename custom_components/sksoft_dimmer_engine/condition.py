@@ -100,8 +100,18 @@ class IsCycleDimmingCondition(Condition):
         self._options = config.options
         self._entity_ids = list(self._options.get(ATTR_LIGHTS, []))
 
+    def _async_check(self, **kwargs: Unpack[ConditionCheckParams]) -> bool | None:
+        """Check the condition (HA 2026.3+ API).
+
+        On HA 2026.3+ the ``Condition`` base class extends ``ConditionChecker``
+        which declares ``_async_check`` as the abstract entry point. Older
+        2026.2.x releases used ``async_get_checker`` instead; both are kept
+        in sync via :meth:`async_get_checker`.
+        """
+        return is_cycle_dimming(self._hass, self._entity_ids)
+
     async def async_get_checker(self) -> ConditionChecker:
-        """Return the condition checker callable."""
+        """Return the condition checker callable (HA 2026.2.x compatibility)."""
         entity_ids = self._entity_ids
         hass = self._hass
 
@@ -134,8 +144,16 @@ class IsCCWCyclingCondition(Condition):
         self._options = config.options
         self._entity_ids = list(self._options.get(ATTR_LIGHTS, []))
 
+    def _async_check(self, **kwargs: Unpack[ConditionCheckParams]) -> bool | None:
+        """Check the condition (HA 2026.3+ API).
+
+        See :meth:`IsCycleDimmingCondition._async_check` for context on the
+        dual API surface.
+        """
+        return is_ccw_cycling(self._hass, self._entity_ids)
+
     async def async_get_checker(self) -> ConditionChecker:
-        """Return the condition checker callable."""
+        """Return the condition checker callable (HA 2026.2.x compatibility)."""
         entity_ids = self._entity_ids
         hass = self._hass
 

@@ -1,7 +1,9 @@
 {
   "domain": "sksoft_dimmer_engine",
   "name": "SKSoft Dimmer Engine",
-  "codeowners": ["@SK-Software-Ltd"],
+  "codeowners": [
+    "@SK-Software-Ltd"
+  ],
   "config_flow": true,
   "dependencies": [],
   "documentation": "https://github.com/SK-Software-Ltd/ha-dimmer-engine",
@@ -10,5 +12,5 @@
   "issue_tracker": "https://github.com/SK-Software-Ltd/ha-dimmer-engine/issues",
   "quality_scale": "silver",
   "requirements": [],
-  "version": "2.0.0"
+  "version": "2.0.1"
 }
