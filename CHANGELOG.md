@@ -5,6 +5,22 @@ All notable changes to SKSoft Dimmer Engine are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.1] - 2026-05-26
+
+### Fixed
+
+- **Conditions now work on Home Assistant 2026.3+.** The `Condition` base class in HA 2026.3 was refactored: it now extends `ConditionChecker` and declares `_async_check` as the abstract entry point instead of `async_get_checker`. Without this fix, instantiating `IsCycleDimmingCondition` or `IsCCWCyclingCondition` on HA 2026.3 or later raised:
+
+  ```
+  TypeError: Can't instantiate abstract class IsCycleDimmingCondition without an implementation for abstract method '_async_check'
+  ```
+
+  Both condition classes now implement **both** `_async_check` (HA 2026.3+) and `async_get_checker` (HA 2026.2.x), so the integration loads cleanly on any HA release from 2024.12 onwards.
+
+### Added
+
+- Regression tests for `_async_check` invocation paths on both condition classes (`test_cycle_dimming_condition_async_check_direct`, `test_ccw_cycling_condition_async_check_direct`, `test_condition_classes_are_concrete`).
+
 ## [2.0.0] - 2026-05-26
 
 ### Breaking Changes

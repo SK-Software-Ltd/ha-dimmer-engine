@@ -182,3 +182,43 @@ async def test_condition_init_rejects_none_options(hass: HomeAssistant) -> None:
         IsCycleDimmingCondition(hass, config)
     with pytest.raises(ValueError):
         IsCCWCyclingCondition(hass, config)
+
+
+async def test_cycle_dimming_condition_async_check_direct(hass: HomeAssistant) -> None:
+    """HA 2026.3+ calls ``_async_check`` directly instead of going through ``async_get_checker``."""
+    entry = await _setup_integration(hass)
+    engine = entry.runtime_data["engine"]
+    engine._registry["light.living"] = _brightness_registry_entry()
+
+    config = ConditionConfig(options={ATTR_LIGHTS: ["light.living"]})
+    condition = IsCycleDimmingCondition(hass, config)
+    assert condition._async_check() is True
+
+    absent_config = ConditionConfig(options={ATTR_LIGHTS: ["light.absent"]})
+    absent_condition = IsCycleDimmingCondition(hass, absent_config)
+    assert absent_condition._async_check() is False
+
+
+async def test_ccw_cycling_condition_async_check_direct(hass: HomeAssistant) -> None:
+    """HA 2026.3+ calls ``_async_check`` directly instead of going through ``async_get_checker``."""
+    entry = await _setup_integration(hass)
+    ccw_engine = entry.runtime_data["ccw_engine"]
+    ccw_engine._registry["light.window"] = _ccw_registry_entry()
+
+    config = ConditionConfig(options={ATTR_LIGHTS: ["light.window"]})
+    condition = IsCCWCyclingCondition(hass, config)
+    assert condition._async_check() is True
+
+    absent_config = ConditionConfig(options={ATTR_LIGHTS: ["light.absent"]})
+    absent_condition = IsCCWCyclingCondition(hass, absent_config)
+    assert absent_condition._async_check() is False
+
+
+def test_condition_classes_are_concrete() -> None:
+    """Regression guard: classes must define both ``_async_check`` (HA 2026.3+) and ``async_get_checker`` (HA 2026.2.x)."""
+    assert "_async_check" in IsCycleDimmingCondition.__dict__
+    assert "_async_check" in IsCCWCyclingCondition.__dict__
+    assert "async_get_checker" in IsCycleDimmingCondition.__dict__
+    assert "async_get_checker" in IsCCWCyclingCondition.__dict__
+    assert IsCycleDimmingCondition.__abstractmethods__ == frozenset()
+    assert IsCCWCyclingCondition.__abstractmethods__ == frozenset()
