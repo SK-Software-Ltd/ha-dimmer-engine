@@ -73,3 +73,7 @@ venv.bak/
 .storage/
 home-assistant.log
 home-assistant_v2.db
+
+# Linters / type checkers
+.mypy_cache/
+.ruff_cache/

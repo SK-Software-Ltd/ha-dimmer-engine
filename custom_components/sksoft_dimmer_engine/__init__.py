@@ -1,34 +1,28 @@
 """SKSoft Dimmer Engine integration for Home Assistant.
 
 This integration provides a sine-wave, time-based brightness cycling engine
-for one or more Light entities, running a single shared async loop.
+for one or more Light entities, running a single shared async loop, plus a
+parallel CCW (color temperature) cycling engine.
+
+Module layout:
+- ``engine.py``     : :class:`DimmerEngine` (brightness cycling)
+- ``ccw_engine.py`` : :class:`CCWCycleEngine` (color temperature cycling)
+- ``__init__.py``   : setup/teardown, service registration, runtime_data wiring
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import math
-from time import monotonic
-from typing import TYPE_CHECKING, Any
+from typing import Any, TypedDict
 
 import voluptuous as vol
 
-from homeassistant import config_entries
-from homeassistant.components.light import (
-    ATTR_BRIGHTNESS,
-    ATTR_COLOR_TEMP_KELVIN,
-    ATTR_TRANSITION,
-)
-from homeassistant.const import (
-    ATTR_ENTITY_ID,
-    SERVICE_TURN_ON,
-    STATE_ON,
-)
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
+from .ccw_engine import CCWCycleEngine
 from .const import (
     ATTR_LIGHTS,
     ATTR_MAX_BRIGHTNESS,
@@ -52,20 +46,7 @@ from .const import (
     DEFAULT_SYNC_GROUP,
     DEFAULT_TICK_S,
     DOMAIN,
-    PHASE_MODE_ABSOLUTE,
-    PHASE_MODE_SYNC_TO_CURRENT,
     PHASE_MODES,
-    REG_MAX_B,
-    REG_MAX_CT,
-    REG_MIN_B,
-    REG_MIN_CT,
-    REG_MIN_DELTA,
-    REG_PERIOD,
-    REG_PHASE_MODE,
-    REG_PHASE_OFFSET,
-    REG_STARTED_AT_TS,
-    REG_SYNC_GROUP,
-    REG_TICK,
     SERVICE_START,
     SERVICE_START_CCW,
     SERVICE_STATUS,
@@ -74,10 +55,7 @@ from .const import (
     SERVICE_STOP_ALL_CCW,
     SERVICE_STOP_CCW,
 )
-from .storage import CCWCycleStore, DimmerEngineStore
-
-if TYPE_CHECKING:
-    pass
+from .engine import DimmerEngine
 
 LOGGER = logging.getLogger(__name__)
 
@@ -85,7 +63,19 @@ LOGGER = logging.getLogger(__name__)
 LOGGER.debug("SKSoft Dimmer Engine __init__ module loaded, DOMAIN=%s", DOMAIN)
 
 
-def _validate_brightness_range(data: dict) -> dict:
+class DimmerEngineData(TypedDict):
+    """Runtime data attached to the config entry."""
+
+    engine: DimmerEngine
+    ccw_engine: CCWCycleEngine
+
+
+# Typed alias for our config entry — its ``runtime_data`` is a
+# :class:`DimmerEngineData` once :func:`async_setup_entry` has run.
+type DimmerEngineConfigEntry = ConfigEntry[DimmerEngineData]
+
+
+def _validate_brightness_range(data: dict[str, Any]) -> dict[str, Any]:
     """Validate that min_brightness is less than max_brightness."""
     min_b = data.get(ATTR_MIN_BRIGHTNESS, DEFAULT_MIN_BRIGHTNESS)
     max_b = data.get(ATTR_MAX_BRIGHTNESS, DEFAULT_MAX_BRIGHTNESS)
@@ -133,7 +123,7 @@ SERVICE_STOP_SCHEMA = vol.Schema(
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
 
-def _validate_color_temp_range(data: dict) -> dict:
+def _validate_color_temp_range(data: dict[str, Any]) -> dict[str, Any]:
     """Validate that min_color_temp is less than max_color_temp."""
     min_ct = data.get(ATTR_MIN_COLOR_TEMP, DEFAULT_MIN_COLOR_TEMP)
     max_ct = data.get(ATTR_MAX_COLOR_TEMP, DEFAULT_MAX_COLOR_TEMP)
@@ -165,7 +155,7 @@ SERVICE_START_CCW_SCHEMA = vol.All(
             ),
             vol.Optional(ATTR_SYNC_GROUP, default=DEFAULT_SYNC_GROUP): cv.boolean,
             vol.Optional(ATTR_MIN_DELTA, default=DEFAULT_MIN_DELTA): vol.All(
-                vol.Coerce(int), vol.Range(min=1, max=200)
+                vol.Coerce(int), vol.Range(min=1, max=255)
             ),
         }
     ),
@@ -173,683 +163,36 @@ SERVICE_START_CCW_SCHEMA = vol.All(
 )
 
 
-class DimmerEngine:
-    """Class to manage the dimmer engine loop and registry."""
-
-    def __init__(self, hass: HomeAssistant) -> None:
-        """Initialize the dimmer engine."""
-        self.hass = hass
-        self._registry: dict[str, dict[str, Any]] = {}
-        self._lock = asyncio.Lock()
-        self._task: asyncio.Task | None = None
-        self._store = DimmerEngineStore(hass)
-        self._running = False
-
-    async def async_load(self) -> None:
-        """Load registry from storage and start loop if needed."""
-        async with self._lock:
-            self._registry = await self._store.async_load()
-            if self._registry:
-                LOGGER.info(
-                    "Restored %d lights from storage: %s",
-                    len(self._registry),
-                    list(self._registry.keys()),
-                )
-                self._ensure_loop_running()
-
-    async def async_save(self) -> None:
-        """Save registry to storage."""
-        await self._store.async_save(self._registry)
-
-    async def async_shutdown(self) -> None:
-        """Shutdown the engine cleanly."""
-        async with self._lock:
-            self._running = False
-            if self._task and not self._task.done():
-                self._task.cancel()
-                try:
-                    await self._task
-                except asyncio.CancelledError:
-                    pass
-            await self.async_save()
-            LOGGER.info("Dimmer engine shutdown complete")
-
-    def _compute_phase_offset_for_brightness(
-        self, current_brightness: int, min_b: int, max_b: int, period: float
-    ) -> float:
-        """Compute phase offset so sine matches current brightness at t=0."""
-        mid = (min_b + max_b) / 2
-        amp = (max_b - min_b) / 2
-
-        if amp == 0:
-            return 0.0
-
-        # Clamp to valid range for asin
-        normalized = (current_brightness - mid) / amp
-        normalized = max(-1.0, min(1.0, normalized))
-
-        # asin gives us the phase where sin(phase) = normalized
-        # We want the phase at t=0, so offset = asin(normalized)
-        return math.asin(normalized)
-
-    async def async_start(
-        self,
-        lights: list[str],
-        period_s: float,
-        tick_s: float,
-        min_brightness: int,
-        max_brightness: int,
-        phase_mode: str,
-        phase_offset: float,
-        sync_group: bool,
-        min_delta: int,
-    ) -> None:
-        """Start dimming for the specified lights."""
-        async with self._lock:
-            now = monotonic()
-            computed_offset: float | None = None
-
-            for i, entity_id in enumerate(lights):
-                # Determine phase offset based on mode
-                if phase_mode == PHASE_MODE_SYNC_TO_CURRENT:
-                    if sync_group and computed_offset is not None:
-                        # Reuse computed offset from first light
-                        offset = computed_offset
-                    else:
-                        # Compute offset from current brightness
-                        state = self.hass.states.get(entity_id)
-                        current_brightness = DEFAULT_MIN_BRIGHTNESS
-                        if state and state.attributes.get(ATTR_BRIGHTNESS):
-                            current_brightness = int(
-                                state.attributes.get(ATTR_BRIGHTNESS)
-                            )
-                        offset = self._compute_phase_offset_for_brightness(
-                            current_brightness,
-                            min_brightness,
-                            max_brightness,
-                            period_s,
-                        )
-                        if sync_group and i == 0:
-                            computed_offset = offset
-                elif phase_mode == PHASE_MODE_ABSOLUTE:
-                    offset = phase_offset
-                else:  # PHASE_MODE_RELATIVE
-                    offset = phase_offset
-
-                self._registry[entity_id] = {
-                    REG_PERIOD: period_s,
-                    REG_TICK: tick_s,
-                    REG_MIN_B: min_brightness,
-                    REG_MAX_B: max_brightness,
-                    REG_PHASE_OFFSET: offset,
-                    REG_MIN_DELTA: min_delta,
-                    REG_STARTED_AT_TS: now,
-                    REG_PHASE_MODE: phase_mode,
-                    REG_SYNC_GROUP: sync_group,
-                }
-                LOGGER.info(
-                    "Started dimmer engine for %s: period=%.2fs, brightness=[%d,%d], "
-                    "phase_mode=%s, offset=%.4f",
-                    entity_id,
-                    period_s,
-                    min_brightness,
-                    max_brightness,
-                    phase_mode,
-                    offset,
-                )
-
-            await self.async_save()
-            self._ensure_loop_running()
-
-    async def async_stop(self, lights: list[str]) -> None:
-        """Stop dimming for the specified lights."""
-        async with self._lock:
-            for entity_id in lights:
-                if entity_id in self._registry:
-                    del self._registry[entity_id]
-                    LOGGER.info("Stopped dimmer engine for %s", entity_id)
-                else:
-                    LOGGER.warning(
-                        "Light %s was not in dimmer engine registry", entity_id
-                    )
-
-            await self.async_save()
-
-            # Stop the loop immediately if registry is now empty
-            if not self._registry:
-                self._stop_loop()
-
-    async def async_stop_all(self) -> None:
-        """Stop dimming for all lights."""
-        async with self._lock:
-            count = len(self._registry)
-            self._registry.clear()
-            await self.async_save()
-            LOGGER.info("Stopped dimmer engine for all %d lights", count)
-
-            # Stop the loop immediately
-            self._stop_loop()
-
-    def _stop_loop(self) -> None:
-        """Stop the background loop task."""
-        self._running = False
-        if self._task and not self._task.done():
-            self._task.cancel()
-            LOGGER.debug("Cancelled dimmer engine loop task")
-
-    def get_status(self) -> dict[str, Any]:
-        """Get the current registry status."""
-        return {
-            "active_lights": len(self._registry),
-            "loop_running": self._task is not None and not self._task.done(),
-            "registry": {k: dict(v) for k, v in self._registry.items()},
-        }
-
-    def is_cycle_dimming(self, entity_ids: list[str]) -> bool:
-        """Check if any of the given light entities are in cycle dimming.
-
-        Args:
-            entity_ids: List of entity IDs to check.
-
-        Returns:
-            True if at least one of the entities is currently in cycle dimming.
-
-        """
-        for entity_id in entity_ids:
-            if entity_id in self._registry:
-                LOGGER.debug("Entity %s is in cycle dimming", entity_id)
-                return True
-        LOGGER.debug("No entities in cycle dimming from: %s", entity_ids)
-        return False
-
-    @callback
-    def _ensure_loop_running(self) -> None:
-        """Ensure the background loop task is running."""
-        if self._task is None or self._task.done():
-            self._running = True
-            self._task = self.hass.async_create_task(
-                self._run_loop(), "sksoft_dimmer_engine_loop"
-            )
-            LOGGER.debug("Started dimmer engine loop task")
-
-    async def _run_loop(self) -> None:
-        """Main loop that updates all lights."""
-        LOGGER.debug("Dimmer engine loop started")
-
-        while self._running:
-            # Collect registry snapshot and min tick while holding the lock
-            async with self._lock:
-                if not self._registry:
-                    LOGGER.debug("Registry empty, stopping loop")
-                    break
-
-                # Find the minimum tick interval
-                min_tick = min(
-                    entry[REG_TICK] for entry in self._registry.values()
-                )
-
-                # Take a snapshot of the registry to avoid holding lock during updates
-                registry_snapshot = {k: dict(v) for k, v in self._registry.items()}
-
-            # Get current time after releasing lock (monotonic for accurate timing)
-            now = monotonic()
-
-            # Build update coroutines for all lights and execute in parallel
-            update_tasks = [
-                self._update_light(entity_id, entry, now)
-                for entity_id, entry in registry_snapshot.items()
-            ]
-            if update_tasks:
-                results = await asyncio.gather(*update_tasks)
-                # Collect entities that need to be removed (missing entities)
-                entities_to_remove = [r for r in results if r is not None]
-
-                # Remove missing entities from registry while holding the lock
-                if entities_to_remove:
-                    async with self._lock:
-                        for entity_id in entities_to_remove:
-                            if self._registry.pop(entity_id, None) is not None:
-                                LOGGER.info("Removed missing entity %s from registry", entity_id)
-                        await self.async_save()
-
-            # Sleep for the minimum tick interval
-            await asyncio.sleep(min_tick)
-
-        LOGGER.debug("Dimmer engine loop ended")
-
-    async def _update_light(
-        self, entity_id: str, entry: dict[str, Any], now: float
-    ) -> str | None:
-        """Update a single light's brightness.
-
-        Returns the entity_id if the entity was not found and should be removed,
-        otherwise returns None.
-        """
-        period = entry[REG_PERIOD]
-        min_b = entry[REG_MIN_B]
-        max_b = entry[REG_MAX_B]
-        phase_offset = entry[REG_PHASE_OFFSET]
-        min_delta = entry[REG_MIN_DELTA]
-        started_at = entry[REG_STARTED_AT_TS]
-
-        # Calculate elapsed time
-        elapsed = now - started_at
-
-        # Calculate phase
-        time_phase = (2 * math.pi * elapsed) / period
-
-        # All phase modes use the same formula: phase = time_phase + offset
-        # The difference is how the offset was computed when the light was registered:
-        # - sync_to_current: offset computed from current brightness using asin
-        # - absolute: offset provided directly by user
-        # - relative: offset provided by user, added to time-based phase
-        phase = time_phase + phase_offset
-
-        # Calculate target brightness using sine wave
-        mid = (min_b + max_b) / 2
-        amp = (max_b - min_b) / 2
-        target = round(mid + amp * math.sin(phase))
-
-        # Clamp to valid range
-        target = max(min_b, min(max_b, target))
-
-        # Get current state
-        state = self.hass.states.get(entity_id)
-        if state is None:
-            LOGGER.warning("Entity %s not found, will remove from registry", entity_id)
-            return entity_id
-
-        # Skip lights that are not currently on
-        if state.state != STATE_ON:
-            LOGGER.debug("Skipping %s: light is not on (state=%s)", entity_id, state.state)
-            return None
-
-        current_brightness = state.attributes.get(ATTR_BRIGHTNESS, 0)
-        if current_brightness is None:
-            current_brightness = 0
-
-        # Only update if delta is significant enough
-        if abs(target - current_brightness) >= min_delta:
-            LOGGER.debug(
-                "Updating %s: brightness %d -> %d (phase=%.2f)",
-                entity_id,
-                current_brightness,
-                target,
-                phase,
-            )
-            # Use transition time (in seconds) equal to tick interval for smooth dimming
-            tick = entry[REG_TICK]
-            await self.hass.services.async_call(
-                "light",
-                SERVICE_TURN_ON,
-                {ATTR_ENTITY_ID: entity_id, ATTR_BRIGHTNESS: target, ATTR_TRANSITION: tick},
-                blocking=False,
-            )
-
-        return None
-
-
-class CCWCycleEngine:
-    """Class to manage the CCW (Color Temperature) cycle engine loop and registry."""
-
-    def __init__(self, hass: HomeAssistant) -> None:
-        """Initialize the CCW cycle engine."""
-        self.hass = hass
-        self._registry: dict[str, dict[str, Any]] = {}
-        self._lock = asyncio.Lock()
-        self._task: asyncio.Task | None = None
-        self._store = CCWCycleStore(hass)
-        self._running = False
-
-    async def async_load(self) -> None:
-        """Load registry from storage and start loop if needed."""
-        async with self._lock:
-            self._registry = await self._store.async_load()
-            if self._registry:
-                LOGGER.info(
-                    "Restored %d lights from CCW storage: %s",
-                    len(self._registry),
-                    list(self._registry.keys()),
-                )
-                self._ensure_loop_running()
-
-    async def async_save(self) -> None:
-        """Save registry to storage."""
-        await self._store.async_save(self._registry)
-
-    async def async_shutdown(self) -> None:
-        """Shutdown the engine cleanly."""
-        async with self._lock:
-            self._running = False
-            if self._task and not self._task.done():
-                self._task.cancel()
-                try:
-                    await self._task
-                except asyncio.CancelledError:
-                    pass
-            await self.async_save()
-            LOGGER.info("CCW cycle engine shutdown complete")
-
-    def _compute_phase_offset_for_color_temp(
-        self, current_ct: int, min_ct: int, max_ct: int, period: float
-    ) -> float:
-        """Compute phase offset so sine matches current color temp at t=0."""
-        mid = (min_ct + max_ct) / 2
-        amp = (max_ct - min_ct) / 2
-
-        if amp == 0:
-            return 0.0
-
-        # Clamp to valid range for asin
-        normalized = (current_ct - mid) / amp
-        normalized = max(-1.0, min(1.0, normalized))
-
-        # asin gives us the phase where sin(phase) = normalized
-        # We want the phase at t=0, so offset = asin(normalized)
-        return math.asin(normalized)
-
-    async def async_start(
-        self,
-        lights: list[str],
-        period_s: float,
-        tick_s: float,
-        min_color_temp: int,
-        max_color_temp: int,
-        phase_mode: str,
-        phase_offset: float,
-        sync_group: bool,
-        min_delta: int,
-    ) -> None:
-        """Start CCW cycling for the specified lights."""
-        async with self._lock:
-            now = monotonic()
-            computed_offset: float | None = None
-
-            for i, entity_id in enumerate(lights):
-                # Determine phase offset based on mode
-                if phase_mode == PHASE_MODE_SYNC_TO_CURRENT:
-                    if sync_group and computed_offset is not None:
-                        # Reuse computed offset from first light
-                        offset = computed_offset
-                    else:
-                        # Compute offset from current color temperature
-                        state = self.hass.states.get(entity_id)
-                        current_ct = DEFAULT_MIN_COLOR_TEMP
-                        if state and state.attributes.get(ATTR_COLOR_TEMP_KELVIN):
-                            current_ct = int(
-                                state.attributes.get(ATTR_COLOR_TEMP_KELVIN)
-                            )
-                        offset = self._compute_phase_offset_for_color_temp(
-                            current_ct,
-                            min_color_temp,
-                            max_color_temp,
-                            period_s,
-                        )
-                        if sync_group and i == 0:
-                            computed_offset = offset
-                elif phase_mode == PHASE_MODE_ABSOLUTE:
-                    offset = phase_offset
-                else:  # PHASE_MODE_RELATIVE
-                    offset = phase_offset
-
-                self._registry[entity_id] = {
-                    REG_PERIOD: period_s,
-                    REG_TICK: tick_s,
-                    REG_MIN_CT: min_color_temp,
-                    REG_MAX_CT: max_color_temp,
-                    REG_PHASE_OFFSET: offset,
-                    REG_MIN_DELTA: min_delta,
-                    REG_STARTED_AT_TS: now,
-                    REG_PHASE_MODE: phase_mode,
-                    REG_SYNC_GROUP: sync_group,
-                }
-                LOGGER.info(
-                    "Started CCW cycle engine for %s: period=%.2fs, color_temp=[%d,%d], "
-                    "phase_mode=%s, offset=%.4f",
-                    entity_id,
-                    period_s,
-                    min_color_temp,
-                    max_color_temp,
-                    phase_mode,
-                    offset,
-                )
-
-            await self.async_save()
-            self._ensure_loop_running()
-
-    async def async_stop(self, lights: list[str]) -> None:
-        """Stop CCW cycling for the specified lights."""
-        async with self._lock:
-            for entity_id in lights:
-                if entity_id in self._registry:
-                    del self._registry[entity_id]
-                    LOGGER.info("Stopped CCW cycle engine for %s", entity_id)
-                else:
-                    LOGGER.warning(
-                        "Light %s was not in CCW cycle engine registry", entity_id
-                    )
-
-            await self.async_save()
-
-            # Stop the loop immediately if registry is now empty
-            if not self._registry:
-                self._stop_loop()
-
-    async def async_stop_all(self) -> None:
-        """Stop CCW cycling for all lights."""
-        async with self._lock:
-            count = len(self._registry)
-            self._registry.clear()
-            await self.async_save()
-            LOGGER.info("Stopped CCW cycle engine for all %d lights", count)
-
-            # Stop the loop immediately
-            self._stop_loop()
-
-    def _stop_loop(self) -> None:
-        """Stop the background loop task."""
-        self._running = False
-        if self._task and not self._task.done():
-            self._task.cancel()
-            LOGGER.debug("Cancelled CCW cycle engine loop task")
-
-    def get_status(self) -> dict[str, Any]:
-        """Get the current registry status."""
-        return {
-            "active_lights": len(self._registry),
-            "loop_running": self._task is not None and not self._task.done(),
-            "registry": {k: dict(v) for k, v in self._registry.items()},
-        }
-
-    def is_ccw_cycling(self, entity_ids: list[str]) -> bool:
-        """Check if any of the given light entities are in CCW cycling.
-
-        Args:
-            entity_ids: List of entity IDs to check.
-
-        Returns:
-            True if at least one of the entities is currently in CCW cycling.
-
-        """
-        for entity_id in entity_ids:
-            if entity_id in self._registry:
-                LOGGER.debug("Entity %s is in CCW cycling", entity_id)
-                return True
-        LOGGER.debug("No entities in CCW cycling from: %s", entity_ids)
-        return False
-
-    @callback
-    def _ensure_loop_running(self) -> None:
-        """Ensure the background loop task is running."""
-        if self._task is None or self._task.done():
-            self._running = True
-            self._task = self.hass.async_create_task(
-                self._run_loop(), "sksoft_ccw_cycle_engine_loop"
-            )
-            LOGGER.debug("Started CCW cycle engine loop task")
-
-    async def _run_loop(self) -> None:
-        """Main loop that updates all lights."""
-        LOGGER.debug("CCW cycle engine loop started")
-
-        while self._running:
-            # Collect registry snapshot and min tick while holding the lock
-            async with self._lock:
-                if not self._registry:
-                    LOGGER.debug("CCW registry empty, stopping loop")
-                    break
-
-                # Find the minimum tick interval
-                min_tick = min(
-                    entry[REG_TICK] for entry in self._registry.values()
-                )
-
-                # Take a snapshot of the registry to avoid holding lock during updates
-                registry_snapshot = {k: dict(v) for k, v in self._registry.items()}
-
-            # Get current time after releasing lock (monotonic for accurate timing)
-            now = monotonic()
-
-            # Build update coroutines for all lights and execute in parallel
-            update_tasks = [
-                self._update_light(entity_id, entry, now)
-                for entity_id, entry in registry_snapshot.items()
-            ]
-            if update_tasks:
-                results = await asyncio.gather(*update_tasks)
-                # Collect entities that need to be removed (missing entities)
-                entities_to_remove = [r for r in results if r is not None]
-
-                # Remove missing entities from registry while holding the lock
-                if entities_to_remove:
-                    async with self._lock:
-                        for entity_id in entities_to_remove:
-                            if self._registry.pop(entity_id, None) is not None:
-                                LOGGER.info(
-                                    "Removed missing entity %s from CCW registry",
-                                    entity_id,
-                                )
-                        await self.async_save()
-
-            # Sleep for the minimum tick interval
-            await asyncio.sleep(min_tick)
-
-        LOGGER.debug("CCW cycle engine loop ended")
-
-    async def _update_light(
-        self, entity_id: str, entry: dict[str, Any], now: float
-    ) -> str | None:
-        """Update a single light's color temperature.
-
-        Returns the entity_id if the entity was not found and should be removed,
-        otherwise returns None.
-        """
-        period = entry[REG_PERIOD]
-        min_ct = entry[REG_MIN_CT]
-        max_ct = entry[REG_MAX_CT]
-        phase_offset = entry[REG_PHASE_OFFSET]
-        min_delta = entry[REG_MIN_DELTA]
-        started_at = entry[REG_STARTED_AT_TS]
-
-        # Calculate elapsed time
-        elapsed = now - started_at
-
-        # Calculate phase
-        time_phase = (2 * math.pi * elapsed) / period
-
-        # All phase modes use the same formula: phase = time_phase + offset
-        phase = time_phase + phase_offset
-
-        # Calculate target color temperature using sine wave
-        mid = (min_ct + max_ct) / 2
-        amp = (max_ct - min_ct) / 2
-        target = round(mid + amp * math.sin(phase))
-
-        # Clamp to valid range
-        target = max(min_ct, min(max_ct, target))
-
-        # Get current state
-        state = self.hass.states.get(entity_id)
-        if state is None:
-            LOGGER.warning(
-                "Entity %s not found, will remove from CCW registry", entity_id
-            )
-            return entity_id
-
-        # Skip lights that are not currently on
-        if state.state != STATE_ON:
-            LOGGER.debug(
-                "Skipping %s: light is not on (state=%s)", entity_id, state.state
-            )
-            return None
-
-        current_ct = state.attributes.get(ATTR_COLOR_TEMP_KELVIN) or 0
-
-        # Only update if delta is significant enough
-        if abs(target - current_ct) >= min_delta:
-            LOGGER.debug(
-                "Updating %s: color_temp %d -> %d (phase=%.2f)",
-                entity_id,
-                current_ct,
-                target,
-                phase,
-            )
-            # Use transition time (in seconds) equal to tick interval for smooth changes
-            tick = entry[REG_TICK]
-            await self.hass.services.async_call(
-                "light",
-                SERVICE_TURN_ON,
-                {
-                    ATTR_ENTITY_ID: entity_id,
-                    ATTR_COLOR_TEMP_KELVIN: target,
-                    ATTR_TRANSITION: tick,
-                },
-                blocking=False,
-            )
-
-        return None
+def _get_engines(
+    hass: HomeAssistant,
+) -> tuple[DimmerEngine | None, CCWCycleEngine | None]:
+    """Return ``(engine, ccw_engine)`` from the (single) loaded config entry.
+
+    Returns ``(None, None)`` when no config entry is loaded yet — service calls
+    in that window are no-ops with a warning.
+    """
+    entries = hass.config_entries.async_entries(DOMAIN)
+    for entry in entries:
+        data = getattr(entry, "runtime_data", None)
+        if data is not None:
+            return data["engine"], data["ccw_engine"]
+    return None, None
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Set up the SKSoft Dimmer Engine integration.
 
-    This integration is configured via the UI (config flow) only.
-    This function is required for Home Assistant but does nothing.
+    Registers domain-scoped services exactly once. The engines themselves are
+    created per config entry in :func:`async_setup_entry` and exposed via
+    ``entry.runtime_data``.
     """
-    return True
 
-
-async def async_setup_entry(
-    hass: HomeAssistant, entry: config_entries.ConfigEntry
-) -> bool:
-    """Set up SKSoft Dimmer Engine from a config entry."""
-    # Initialize brightness dimmer engine
-    engine = DimmerEngine(hass)
-
-    # Initialize CCW (Color Temperature) cycle engine
-    ccw_engine = CCWCycleEngine(hass)
-
-    # Store both engines in hass.data
-    hass.data[DOMAIN] = {
-        "dimmer_engine": engine,
-        "ccw_engine": ccw_engine,
-    }
-
-    # Load persisted registries
-    await engine.async_load()
-    await ccw_engine.async_load()
-
-    # Register shutdown handler
-    async def async_shutdown_handler(event: Any) -> None:
-        """Handle shutdown."""
-        await engine.async_shutdown()
-        await ccw_engine.async_shutdown()
-
-    hass.bus.async_listen_once("homeassistant_stop", async_shutdown_handler)
-
-    # Register brightness dimmer services
     async def handle_start(call: ServiceCall) -> None:
         """Handle the start service call."""
+        engine, _ = _get_engines(hass)
+        if engine is None:
+            LOGGER.warning("sksoft_dimmer_engine.start called but no entry is loaded")
+            return
         await engine.async_start(
             lights=call.data[ATTR_LIGHTS],
             period_s=call.data[ATTR_PERIOD_S],
@@ -864,22 +207,39 @@ async def async_setup_entry(
 
     async def handle_stop(call: ServiceCall) -> None:
         """Handle the stop service call."""
+        engine, _ = _get_engines(hass)
+        if engine is None:
+            LOGGER.warning("sksoft_dimmer_engine.stop called but no entry is loaded")
+            return
         await engine.async_stop(lights=call.data[ATTR_LIGHTS])
 
     async def handle_stop_all(call: ServiceCall) -> None:
         """Handle the stop_all service call."""
+        engine, _ = _get_engines(hass)
+        if engine is None:
+            LOGGER.warning(
+                "sksoft_dimmer_engine.stop_all called but no entry is loaded"
+            )
+            return
         await engine.async_stop_all()
 
     async def handle_status(call: ServiceCall) -> None:
         """Handle the status service call."""
-        status = engine.get_status()
-        ccw_status = ccw_engine.get_status()
-        LOGGER.info("Dimmer Engine Status: %s", status)
-        LOGGER.info("CCW Cycle Engine Status: %s", ccw_status)
+        engine, ccw_engine = _get_engines(hass)
+        if engine is None or ccw_engine is None:
+            LOGGER.warning("sksoft_dimmer_engine.status called but no entry is loaded")
+            return
+        LOGGER.info("Dimmer Engine Status: %s", engine.get_status())
+        LOGGER.info("CCW Cycle Engine Status: %s", ccw_engine.get_status())
 
-    # Register CCW (Color Temperature) cycle services
     async def handle_start_ccw(call: ServiceCall) -> None:
         """Handle the start_ccw service call."""
+        _, ccw_engine = _get_engines(hass)
+        if ccw_engine is None:
+            LOGGER.warning(
+                "sksoft_dimmer_engine.start_ccw called but no entry is loaded"
+            )
+            return
         await ccw_engine.async_start(
             lights=call.data[ATTR_LIGHTS],
             period_s=call.data[ATTR_PERIOD_S],
@@ -894,12 +254,25 @@ async def async_setup_entry(
 
     async def handle_stop_ccw(call: ServiceCall) -> None:
         """Handle the stop_ccw service call."""
+        _, ccw_engine = _get_engines(hass)
+        if ccw_engine is None:
+            LOGGER.warning(
+                "sksoft_dimmer_engine.stop_ccw called but no entry is loaded"
+            )
+            return
         await ccw_engine.async_stop(lights=call.data[ATTR_LIGHTS])
 
     async def handle_stop_all_ccw(call: ServiceCall) -> None:
         """Handle the stop_all_ccw service call."""
+        _, ccw_engine = _get_engines(hass)
+        if ccw_engine is None:
+            LOGGER.warning(
+                "sksoft_dimmer_engine.stop_all_ccw called but no entry is loaded"
+            )
+            return
         await ccw_engine.async_stop_all()
 
+    # Register brightness dimmer services (idempotent — async_setup is one-time)
     hass.services.async_register(
         DOMAIN, SERVICE_START, handle_start, schema=SERVICE_START_SCHEMA
     )
@@ -918,33 +291,48 @@ async def async_setup_entry(
     )
     hass.services.async_register(DOMAIN, SERVICE_STOP_ALL_CCW, handle_stop_all_ccw)
 
+    return True
+
+
+async def async_setup_entry(
+    hass: HomeAssistant, entry: DimmerEngineConfigEntry
+) -> bool:
+    """Set up SKSoft Dimmer Engine from a config entry."""
+    # Initialize brightness dimmer engine
+    engine = DimmerEngine(hass)
+    # Initialize CCW (Color Temperature) cycle engine
+    ccw_engine = CCWCycleEngine(hass)
+
+    # Store both engines on the entry's runtime_data (replaces hass.data[DOMAIN])
+    entry.runtime_data = DimmerEngineData(engine=engine, ccw_engine=ccw_engine)
+
+    # Load persisted registries
+    await engine.async_load()
+    await ccw_engine.async_load()
+
+    # Register shutdown handler tied to this entry
+    async def async_shutdown_handler(event: Any) -> None:
+        """Handle Home Assistant stop event."""
+        await engine.async_shutdown()
+        await ccw_engine.async_shutdown()
+
+    entry.async_on_unload(
+        hass.bus.async_listen_once("homeassistant_stop", async_shutdown_handler)
+    )
+
     LOGGER.info("SKSoft Dimmer Engine integration loaded")
     return True
 
 
 async def async_unload_entry(
-    hass: HomeAssistant, entry: config_entries.ConfigEntry
+    hass: HomeAssistant, entry: DimmerEngineConfigEntry
 ) -> bool:
     """Unload a config entry."""
-    data = hass.data.get(DOMAIN)
-    if data:
-        engine = data.get("dimmer_engine")
-        ccw_engine = data.get("ccw_engine")
-        if engine:
-            await engine.async_shutdown()
-        if ccw_engine:
-            await ccw_engine.async_shutdown()
+    data: DimmerEngineData | None = getattr(entry, "runtime_data", None)
+    if data is not None:
+        await data["engine"].async_shutdown()
+        await data["ccw_engine"].async_shutdown()
 
-    # Unregister services
-    hass.services.async_remove(DOMAIN, SERVICE_START)
-    hass.services.async_remove(DOMAIN, SERVICE_STOP)
-    hass.services.async_remove(DOMAIN, SERVICE_STOP_ALL)
-    hass.services.async_remove(DOMAIN, SERVICE_STATUS)
-    hass.services.async_remove(DOMAIN, SERVICE_START_CCW)
-    hass.services.async_remove(DOMAIN, SERVICE_STOP_CCW)
-    hass.services.async_remove(DOMAIN, SERVICE_STOP_ALL_CCW)
-
-    hass.data.pop(DOMAIN, None)
-
-    LOGGER.info("SKSoft Dimmer Engine integration unloaded")
+    # Services are owned by async_setup and survive entry reloads — do not
+    # unregister them here.
     return True

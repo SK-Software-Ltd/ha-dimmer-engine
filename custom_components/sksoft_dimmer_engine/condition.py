@@ -1,9 +1,16 @@
-"""Condition for SKSoft Dimmer Engine integration."""
+"""Condition platform for SKSoft Dimmer Engine integration.
+
+Provides two conditions implemented against the Home Assistant 2026.x
+condition API (``homeassistant.helpers.condition``):
+``is_cycle_dimming`` and ``is_ccw_cycling``. Each condition is configured
+with a list of light entity ids and returns True when at least one of those
+lights is currently being driven by the corresponding engine.
+"""
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Unpack, cast
 
 import voluptuous as vol
 
@@ -11,6 +18,7 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.condition import (
     Condition,
     ConditionChecker,
+    ConditionCheckParams,
     ConditionConfig,
 )
 from homeassistant.helpers.typing import ConfigType
@@ -20,9 +28,11 @@ from .const import ATTR_LIGHTS, DOMAIN
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
 
+    from .ccw_engine import CCWCycleEngine
+    from .engine import DimmerEngine
+
 LOGGER = logging.getLogger(__name__)
 
-# Condition schema requires a list of lights
 _OPTIONS_SCHEMA_DICT: dict[vol.Marker, Any] = {
     vol.Required(ATTR_LIGHTS): cv.entity_ids,
 }
@@ -34,118 +44,105 @@ _CONDITION_SCHEMA = vol.Schema(
 )
 
 
-def is_cycle_dimming(hass: HomeAssistant, entity_ids: list[str]) -> bool:
-    """Check if any of the given light entities are in cycle dimming.
+def _find_engines(
+    hass: HomeAssistant,
+) -> tuple[DimmerEngine | None, CCWCycleEngine | None]:
+    """Locate the dimmer and CCW engines from any loaded config entry.
 
-    Args:
-        hass: Home Assistant instance.
-        entity_ids: List of entity IDs to check.
-
-    Returns:
-        True if at least one of the entities is currently in cycle dimming.
-
+    The integration stores both engines on ``ConfigEntry.runtime_data`` in
+    :func:`custom_components.sksoft_dimmer_engine.async_setup_entry`. This
+    helper walks the loaded entries for our domain and returns the first
+    pair it finds, or ``(None, None)`` when no entry is loaded yet.
     """
-    data = hass.data.get(DOMAIN)
-    if data is None:
-        LOGGER.debug(
-            "Dimmer engine not found in hass.data, returning False for is_cycle_dimming"
-        )
-        return False
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        data = getattr(entry, "runtime_data", None)
+        if data is not None:
+            return data["engine"], data["ccw_engine"]
+    return None, None
 
-    engine = data.get("dimmer_engine")
+
+def is_cycle_dimming(hass: HomeAssistant, entity_ids: list[str]) -> bool:
+    """Return True when at least one of ``entity_ids`` is in cycle dimming."""
+    engine, _ = _find_engines(hass)
     if engine is None:
-        LOGGER.debug(
-            "Dimmer engine not found in data dict, returning False for is_cycle_dimming"
-        )
+        LOGGER.debug("Dimmer engine not loaded; returning False for is_cycle_dimming")
         return False
-
     return engine.is_cycle_dimming(entity_ids)
 
 
 def is_ccw_cycling(hass: HomeAssistant, entity_ids: list[str]) -> bool:
-    """Check if any of the given light entities are in CCW cycling.
-
-    Args:
-        hass: Home Assistant instance.
-        entity_ids: List of entity IDs to check.
-
-    Returns:
-        True if at least one of the entities is currently in CCW cycling.
-
-    """
-    data = hass.data.get(DOMAIN)
-    if data is None:
-        LOGGER.debug(
-            "CCW engine not found in hass.data, returning False for is_ccw_cycling"
-        )
-        return False
-
-    ccw_engine = data.get("ccw_engine")
+    """Return True when at least one of ``entity_ids`` is in CCW cycling."""
+    _, ccw_engine = _find_engines(hass)
     if ccw_engine is None:
-        LOGGER.debug(
-            "CCW engine not found in data dict, returning False for is_ccw_cycling"
-        )
+        LOGGER.debug("CCW engine not loaded; returning False for is_ccw_cycling")
         return False
-
     return ccw_engine.is_ccw_cycling(entity_ids)
 
 
 class IsCycleDimmingCondition(Condition):
-    """Is Cycle Dimming condition."""
+    """Condition: any configured light is currently in cycle dimming."""
 
     _options: dict[str, Any]
+    _entity_ids: list[str]
 
     @classmethod
     async def async_validate_config(
         cls, hass: HomeAssistant, config: ConfigType
     ) -> ConfigType:
-        """Validate config."""
+        """Validate condition config."""
         return cast(ConfigType, _CONDITION_SCHEMA(config))
 
     def __init__(self, hass: HomeAssistant, config: ConditionConfig) -> None:
-        """Initialize condition."""
+        """Initialize the condition from its parsed config."""
         super().__init__(hass, config)
         if config.options is None:
             raise ValueError("Condition config options cannot be None")
         self._options = config.options
+        self._entity_ids = list(self._options.get(ATTR_LIGHTS, []))
 
     async def async_get_checker(self) -> ConditionChecker:
-        """Return the condition checker function."""
-        lights = self._options.get(ATTR_LIGHTS, [])
+        """Return the condition checker callable."""
+        entity_ids = self._entity_ids
+        hass = self._hass
 
-        def check_is_cycle_dimming(**kwargs: Any) -> bool:
-            """Check if any light is in cycle dimming."""
-            return is_cycle_dimming(self._hass, lights)
+        def check_is_cycle_dimming(
+            **kwargs: Unpack[ConditionCheckParams],
+        ) -> bool:
+            return is_cycle_dimming(hass, entity_ids)
 
         return check_is_cycle_dimming
 
 
 class IsCCWCyclingCondition(Condition):
-    """Is CCW Cycling condition."""
+    """Condition: any configured light is currently in CCW cycling."""
 
     _options: dict[str, Any]
+    _entity_ids: list[str]
 
     @classmethod
     async def async_validate_config(
         cls, hass: HomeAssistant, config: ConfigType
     ) -> ConfigType:
-        """Validate config."""
+        """Validate condition config."""
         return cast(ConfigType, _CONDITION_SCHEMA(config))
 
     def __init__(self, hass: HomeAssistant, config: ConditionConfig) -> None:
-        """Initialize condition."""
+        """Initialize the condition from its parsed config."""
         super().__init__(hass, config)
         if config.options is None:
             raise ValueError("Condition config options cannot be None")
         self._options = config.options
+        self._entity_ids = list(self._options.get(ATTR_LIGHTS, []))
 
     async def async_get_checker(self) -> ConditionChecker:
-        """Return the condition checker function."""
-        lights = self._options.get(ATTR_LIGHTS, [])
+        """Return the condition checker callable."""
+        entity_ids = self._entity_ids
+        hass = self._hass
 
-        def check_is_ccw_cycling(**kwargs: Any) -> bool:
-            """Check if any light is in CCW cycling."""
-            return is_ccw_cycling(self._hass, lights)
+        def check_is_ccw_cycling(
+            **kwargs: Unpack[ConditionCheckParams],
+        ) -> bool:
+            return is_ccw_cycling(hass, entity_ids)
 
         return check_is_ccw_cycling
 
@@ -156,6 +153,8 @@ CONDITIONS: dict[str, type[Condition]] = {
 }
 
 
-async def async_get_conditions(hass: HomeAssistant) -> dict[str, type[Condition]]:
-    """Return the available conditions for this integration."""
+async def async_get_conditions(
+    hass: HomeAssistant,
+) -> dict[str, type[Condition]]:
+    """Return the conditions provided by this integration."""
     return CONDITIONS
