@@ -34,6 +34,19 @@ _CONDITION_SCHEMA = vol.Schema(
 )
 
 
+def _get_runtime_data(hass: HomeAssistant) -> Any | None:
+    """Return the loaded entry's ``runtime_data`` for this integration, if any.
+
+    Uses ``hass.config_entries`` rather than ``hass.data[DOMAIN]`` so the
+    engines are read from the modern :attr:`ConfigEntry.runtime_data` slot.
+    """
+    for entry in hass.config_entries.async_entries(DOMAIN):
+        data = getattr(entry, "runtime_data", None)
+        if data is not None:
+            return data
+    return None
+
+
 def is_cycle_dimming(hass: HomeAssistant, entity_ids: list[str]) -> bool:
     """Check if any of the given light entities are in cycle dimming.
 
@@ -45,17 +58,19 @@ def is_cycle_dimming(hass: HomeAssistant, entity_ids: list[str]) -> bool:
         True if at least one of the entities is currently in cycle dimming.
 
     """
-    data = hass.data.get(DOMAIN)
+    data = _get_runtime_data(hass)
     if data is None:
         LOGGER.debug(
-            "Dimmer engine not found in hass.data, returning False for is_cycle_dimming"
+            "Dimmer engine not available (no loaded entry), returning False for "
+            "is_cycle_dimming"
         )
         return False
 
-    engine = data.get("dimmer_engine")
+    engine = data.get("engine") if isinstance(data, dict) else getattr(data, "engine", None)
     if engine is None:
         LOGGER.debug(
-            "Dimmer engine not found in data dict, returning False for is_cycle_dimming"
+            "Dimmer engine missing from runtime_data, returning False for "
+            "is_cycle_dimming"
         )
         return False
 
@@ -73,17 +88,20 @@ def is_ccw_cycling(hass: HomeAssistant, entity_ids: list[str]) -> bool:
         True if at least one of the entities is currently in CCW cycling.
 
     """
-    data = hass.data.get(DOMAIN)
+    data = _get_runtime_data(hass)
     if data is None:
         LOGGER.debug(
-            "CCW engine not found in hass.data, returning False for is_ccw_cycling"
+            "CCW engine not available (no loaded entry), returning False for "
+            "is_ccw_cycling"
         )
         return False
 
-    ccw_engine = data.get("ccw_engine")
+    ccw_engine = (
+        data.get("ccw_engine") if isinstance(data, dict) else getattr(data, "ccw_engine", None)
+    )
     if ccw_engine is None:
         LOGGER.debug(
-            "CCW engine not found in data dict, returning False for is_ccw_cycling"
+            "CCW engine missing from runtime_data, returning False for is_ccw_cycling"
         )
         return False
 
