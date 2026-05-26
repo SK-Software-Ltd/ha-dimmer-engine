@@ -75,7 +75,7 @@ class DimmerEngineData(TypedDict):
 type DimmerEngineConfigEntry = ConfigEntry[DimmerEngineData]
 
 
-def _validate_brightness_range(data: dict) -> dict:
+def _validate_brightness_range(data: dict[str, Any]) -> dict[str, Any]:
     """Validate that min_brightness is less than max_brightness."""
     min_b = data.get(ATTR_MIN_BRIGHTNESS, DEFAULT_MIN_BRIGHTNESS)
     max_b = data.get(ATTR_MAX_BRIGHTNESS, DEFAULT_MAX_BRIGHTNESS)
@@ -123,7 +123,7 @@ SERVICE_STOP_SCHEMA = vol.Schema(
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
 
-def _validate_color_temp_range(data: dict) -> dict:
+def _validate_color_temp_range(data: dict[str, Any]) -> dict[str, Any]:
     """Validate that min_color_temp is less than max_color_temp."""
     min_ct = data.get(ATTR_MIN_COLOR_TEMP, DEFAULT_MIN_COLOR_TEMP)
     max_ct = data.get(ATTR_MAX_COLOR_TEMP, DEFAULT_MAX_COLOR_TEMP)
@@ -163,7 +163,9 @@ SERVICE_START_CCW_SCHEMA = vol.All(
 )
 
 
-def _get_engines(hass: HomeAssistant) -> tuple[DimmerEngine | None, CCWCycleEngine | None]:
+def _get_engines(
+    hass: HomeAssistant,
+) -> tuple[DimmerEngine | None, CCWCycleEngine | None]:
     """Return ``(engine, ccw_engine)`` from the (single) loaded config entry.
 
     Returns ``(None, None)`` when no config entry is loaded yet — service calls

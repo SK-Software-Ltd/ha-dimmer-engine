@@ -7,20 +7,14 @@ that drives sine-wave brightness cycling for one or more Light entities.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import math
 from time import monotonic
 from typing import Any
 
-from homeassistant.components.light import (
-    ATTR_BRIGHTNESS,
-    ATTR_TRANSITION,
-)
-from homeassistant.const import (
-    ATTR_ENTITY_ID,
-    SERVICE_TURN_ON,
-    STATE_ON,
-)
+from homeassistant.components.light import ATTR_BRIGHTNESS, ATTR_TRANSITION
+from homeassistant.const import ATTR_ENTITY_ID, SERVICE_TURN_ON, STATE_ON
 from homeassistant.core import HomeAssistant, callback
 
 from .const import (
@@ -50,7 +44,7 @@ class DimmerEngine:
         self.hass = hass
         self._registry: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         self._store = DimmerEngineStore(hass)
         self._running = False
 
@@ -76,10 +70,8 @@ class DimmerEngine:
             self._running = False
             if self._task and not self._task.done():
                 self._task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await self._task
-                except asyncio.CancelledError:
-                    pass
             await self.async_save()
             LOGGER.info("Dimmer engine shutdown complete")
 
@@ -128,10 +120,10 @@ class DimmerEngine:
                         # Compute offset from current brightness
                         state = self.hass.states.get(entity_id)
                         current_brightness = DEFAULT_MIN_BRIGHTNESS
-                        if state and state.attributes.get(ATTR_BRIGHTNESS):
-                            current_brightness = int(
-                                state.attributes.get(ATTR_BRIGHTNESS)
-                            )
+                        if state is not None:
+                            brightness_attr = state.attributes.get(ATTR_BRIGHTNESS)
+                            if brightness_attr is not None:
+                                current_brightness = int(brightness_attr)
                         offset = self._compute_phase_offset_for_brightness(
                             current_brightness,
                             min_brightness,
@@ -242,7 +234,7 @@ class DimmerEngine:
             LOGGER.debug("Started dimmer engine loop task")
 
     async def _run_loop(self) -> None:
-        """Main loop that updates all lights."""
+        """Run the main loop that updates all lights."""
         LOGGER.debug("Dimmer engine loop started")
 
         while self._running:
@@ -253,9 +245,7 @@ class DimmerEngine:
                     break
 
                 # Find the minimum tick interval
-                min_tick = min(
-                    entry[REG_TICK] for entry in self._registry.values()
-                )
+                min_tick = min(entry[REG_TICK] for entry in self._registry.values())
 
                 # Take a snapshot of the registry to avoid holding lock during updates
                 registry_snapshot = {k: dict(v) for k, v in self._registry.items()}
@@ -278,7 +268,9 @@ class DimmerEngine:
                     async with self._lock:
                         for entity_id in entities_to_remove:
                             if self._registry.pop(entity_id, None) is not None:
-                                LOGGER.info("Removed missing entity %s from registry", entity_id)
+                                LOGGER.info(
+                                    "Removed missing entity %s from registry", entity_id
+                                )
                         await self.async_save()
 
             # Sleep for the minimum tick interval
@@ -330,7 +322,9 @@ class DimmerEngine:
 
         # Skip lights that are not currently on
         if state.state != STATE_ON:
-            LOGGER.debug("Skipping %s: light is not on (state=%s)", entity_id, state.state)
+            LOGGER.debug(
+                "Skipping %s: light is not on (state=%s)", entity_id, state.state
+            )
             return None
 
         current_brightness = state.attributes.get(ATTR_BRIGHTNESS, 0)
@@ -351,7 +345,11 @@ class DimmerEngine:
             await self.hass.services.async_call(
                 "light",
                 SERVICE_TURN_ON,
-                {ATTR_ENTITY_ID: entity_id, ATTR_BRIGHTNESS: target, ATTR_TRANSITION: tick},
+                {
+                    ATTR_ENTITY_ID: entity_id,
+                    ATTR_BRIGHTNESS: target,
+                    ATTR_TRANSITION: tick,
+                },
                 blocking=False,
             )
 

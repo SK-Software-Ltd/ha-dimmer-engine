@@ -20,9 +20,7 @@ class DimmerEngineStore:
 
     def __init__(self, hass: HomeAssistant) -> None:
         """Initialize the storage."""
-        self._store: Store[dict[str, Any]] = Store(
-            hass, STORAGE_VERSION, STORAGE_KEY
-        )
+        self._store: Store[dict[str, Any]] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
 
     async def async_load(self) -> dict[str, Any]:
         """Load the registry from storage."""

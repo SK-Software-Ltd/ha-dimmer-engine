@@ -7,20 +7,14 @@ that drives sine-wave color-temperature cycling for one or more Light entities.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import math
 from time import monotonic
 from typing import Any
 
-from homeassistant.components.light import (
-    ATTR_COLOR_TEMP_KELVIN,
-    ATTR_TRANSITION,
-)
-from homeassistant.const import (
-    ATTR_ENTITY_ID,
-    SERVICE_TURN_ON,
-    STATE_ON,
-)
+from homeassistant.components.light import ATTR_COLOR_TEMP_KELVIN, ATTR_TRANSITION
+from homeassistant.const import ATTR_ENTITY_ID, SERVICE_TURN_ON, STATE_ON
 from homeassistant.core import HomeAssistant, callback
 
 from .const import (
@@ -50,7 +44,7 @@ class CCWCycleEngine:
         self.hass = hass
         self._registry: dict[str, dict[str, Any]] = {}
         self._lock = asyncio.Lock()
-        self._task: asyncio.Task | None = None
+        self._task: asyncio.Task[None] | None = None
         self._store = CCWCycleStore(hass)
         self._running = False
 
@@ -76,10 +70,8 @@ class CCWCycleEngine:
             self._running = False
             if self._task and not self._task.done():
                 self._task.cancel()
-                try:
+                with contextlib.suppress(asyncio.CancelledError):
                     await self._task
-                except asyncio.CancelledError:
-                    pass
             await self.async_save()
             LOGGER.info("CCW cycle engine shutdown complete")
 
@@ -128,10 +120,10 @@ class CCWCycleEngine:
                         # Compute offset from current color temperature
                         state = self.hass.states.get(entity_id)
                         current_ct = DEFAULT_MIN_COLOR_TEMP
-                        if state and state.attributes.get(ATTR_COLOR_TEMP_KELVIN):
-                            current_ct = int(
-                                state.attributes.get(ATTR_COLOR_TEMP_KELVIN)
-                            )
+                        if state is not None:
+                            ct_attr = state.attributes.get(ATTR_COLOR_TEMP_KELVIN)
+                            if ct_attr is not None:
+                                current_ct = int(ct_attr)
                         offset = self._compute_phase_offset_for_color_temp(
                             current_ct,
                             min_color_temp,
@@ -242,7 +234,7 @@ class CCWCycleEngine:
             LOGGER.debug("Started CCW cycle engine loop task")
 
     async def _run_loop(self) -> None:
-        """Main loop that updates all lights."""
+        """Run the main loop that updates all lights."""
         LOGGER.debug("CCW cycle engine loop started")
 
         while self._running:
@@ -253,9 +245,7 @@ class CCWCycleEngine:
                     break
 
                 # Find the minimum tick interval
-                min_tick = min(
-                    entry[REG_TICK] for entry in self._registry.values()
-                )
+                min_tick = min(entry[REG_TICK] for entry in self._registry.values())
 
                 # Take a snapshot of the registry to avoid holding lock during updates
                 registry_snapshot = {k: dict(v) for k, v in self._registry.items()}
