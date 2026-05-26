@@ -276,13 +276,17 @@ async def test_start_service_without_entry_warns(hass: HomeAssistant) -> None:
 async def test_engine_run_loop_processes_registered_light(
     hass: HomeAssistant,
 ) -> None:
+    import asyncio
+
     entry = await _setup_integration(hass)
     engine = entry.runtime_data["engine"]
 
+    update_event = asyncio.Event()
     update_calls: list[str] = []
 
     async def fake_update(entity_id: str, *args, **kwargs) -> str | None:
         update_calls.append(entity_id)
+        update_event.set()
         return None
 
     with patch.object(engine, "_update_light", side_effect=fake_update):
@@ -296,12 +300,8 @@ async def test_engine_run_loop_processes_registered_light(
             },
             blocking=True,
         )
-        for _ in range(50):
-            if update_calls:
-                break
-            await hass.async_block_till_done()
-        await hass.services.async_call(DOMAIN, SERVICE_STOP_ALL, {}, blocking=True)
-        await hass.async_block_till_done()
+        await asyncio.wait_for(update_event.wait(), timeout=2.0)
+        await engine.async_stop_all()
 
     assert "light.loop_target" in update_calls
 
@@ -309,13 +309,17 @@ async def test_engine_run_loop_processes_registered_light(
 async def test_ccw_engine_run_loop_processes_registered_light(
     hass: HomeAssistant,
 ) -> None:
+    import asyncio
+
     entry = await _setup_integration(hass)
     ccw_engine = entry.runtime_data["ccw_engine"]
 
+    update_event = asyncio.Event()
     update_calls: list[str] = []
 
     async def fake_update(entity_id: str, *args, **kwargs) -> str | None:
         update_calls.append(entity_id)
+        update_event.set()
         return None
 
     with patch.object(ccw_engine, "_update_light", side_effect=fake_update):
@@ -329,12 +333,8 @@ async def test_ccw_engine_run_loop_processes_registered_light(
             },
             blocking=True,
         )
-        for _ in range(50):
-            if update_calls:
-                break
-            await hass.async_block_till_done()
-        await hass.services.async_call(DOMAIN, SERVICE_STOP_ALL_CCW, {}, blocking=True)
-        await hass.async_block_till_done()
+        await asyncio.wait_for(update_event.wait(), timeout=2.0)
+        await ccw_engine.async_stop_all()
 
     assert "light.ccw_target" in update_calls
 
