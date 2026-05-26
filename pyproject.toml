@@ -1,0 +1,76 @@
+[project]
+name = "sksoft-dimmer-engine"
+version = "1.2.0"
+description = "SKSoft Dimmer Engine — Home Assistant custom integration"
+requires-python = ">=3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.coverage.run]
+source = ["custom_components/sksoft_dimmer_engine"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+]
+
+[tool.ruff]
+target-version = "py313"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+  "ASYNC",
+  "B",
+  "C4",
+  "D",
+  "E",
+  "F",
+  "G",
+  "I",
+  "N",
+  "PGH",
+  "PIE",
+  "RUF",
+  "S",
+  "SIM",
+  "T20",
+  "TID",
+  "UP",
+  "W",
+]
+ignore = [
+  "D100",
+  "D101",
+  "D102",
+  "D103",
+  "D104",
+  "D107",
+  "D202",
+  "D205",
+  "D213",
+  "D406",
+  "D407",
+  "D408",
+  "D409",
+  "D415",
+  "E501",
+  "N818",
+  "S101",
+]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["homeassistant"]
+combine-as-imports = true
+split-on-trailing-comma = false
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["D", "S101"]
