@@ -1,0 +1,60 @@
+name: HA Compatibility Matrix
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: "0 6 * * *"
+
+jobs:
+  smoke:
+    name: "Smoke (HA ${{ matrix.ha }})"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - ha: "2026.1.0"
+            pthac: "0.13.305"
+            python: "3.13"
+          - ha: "2026.2.3"
+            pthac: "0.13.316"
+            python: "3.13"
+          - ha: "2026.4.4"
+            pthac: "0.13.325"
+            python: "3.13"
+          - ha: "2026.5.4"
+            pthac: "0.13.333"
+            python: "3.13"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install pinned HA + test deps
+        run: |
+          pip install --upgrade pip
+          pip install "pytest-homeassistant-custom-component==${{ matrix.pthac }}"
+      - name: Verify installed HA version
+        run: |
+          python -c "from homeassistant.const import __version__; print(__version__)"
+          python -c "from homeassistant.const import __version__; assert __version__ == '${{ matrix.ha }}', f'expected ${{ matrix.ha }}, got {__version__}'"
+      - name: Run compatibility smoke tests
+        run: pytest tests_compat/ -v
+
+  full-suite:
+    name: "Full pytest (HA latest stable)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install latest pytest-homeassistant-custom-component
+        run: |
+          pip install --upgrade pip
+          pip install pytest-homeassistant-custom-component
+      - name: Show HA version
+        run: python -c "from homeassistant.const import __version__; print('HA', __version__)"
+      - name: Run full test suite
+        run: pytest tests/ -v
