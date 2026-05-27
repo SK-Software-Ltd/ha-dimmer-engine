@@ -5,6 +5,17 @@ All notable changes to SKSoft Dimmer Engine are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.2] - 2026-05-26
+
+### Fixed
+
+- **Correct minimum Home Assistant version declared in `hacs.json`.** Previously declared `2024.11.0`, but the integration imports `Condition`, `ConditionChecker`, `ConditionCheckParams`, and `ConditionConfig` from `homeassistant.helpers.condition` — symbols that were only introduced together in **HA 2026.1.0**. Users on HA 2024.12 – 2025.x would have hit cryptic `ImportError` on integration load. HACS now blocks install on HA versions below `2026.1.0`.
+
+### Added
+
+- **CI compatibility matrix workflow** (`.github/workflows/test-matrix.yaml`) runs daily and on every push, exercising the integration against four pinned Home Assistant versions: `2026.1.0`, `2026.2.3`, `2026.4.4`, `2026.5.4`. This is the safeguard against the v2.0.0 → v2.0.1 regression class — any future HA-API rename now fails CI before a release ships instead of after.
+- **Smoke compatibility test suite** (`tests_compat/test_smoke_compat.py`) that verifies imports resolve, both condition classes are concrete (no missing abstract methods), and the `async_get_conditions` registry returns both. Kept isolated from the main test suite so it has no HA-event-loop dependencies and runs on every HA version in the matrix.
+
 ## [2.0.1] - 2026-05-26
 
 ### Fixed
